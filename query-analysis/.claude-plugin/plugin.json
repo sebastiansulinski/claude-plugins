@@ -1,9 +1,0 @@
-{
-  "name": "query-analysis",
-  "description": "Read-only audit of Eloquent and query-builder usage in a Laravel repo — flags queries with measurable performance or memory improvements and writes findings to docs/analysis/.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Sebastian Sulinski",
-    "email": "seb@sulinski.me"
-  }
-}

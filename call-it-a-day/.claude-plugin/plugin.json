@@ -1,9 +1,0 @@
-{
-  "name": "call-it-a-day",
-  "description": "End-of-session capture — record state so the next session resumes with no context loss.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Sebastian Sulinski",
-    "email": "seb@sulinski.me"
-  }
-}

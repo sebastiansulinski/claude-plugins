@@ -1,0 +1,9 @@
+{
+  "name": "session",
+  "description": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

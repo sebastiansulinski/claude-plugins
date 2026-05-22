@@ -3,7 +3,7 @@ description: Publish a release — update the changelog, create the git tag, and
 argument-hint: [optional version, e.g. "1.2.0"]
 ---
 
-Spawn the `release-manager` agent (via the Task tool) to run the full release workflow.
+Spawn the `manager` agent (via the Task tool) to run the full release workflow.
 
 **Requested version:** $ARGUMENTS
 

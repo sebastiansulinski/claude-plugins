@@ -1,6 +1,6 @@
 {
-  "name": "deprecate-repo",
-  "description": "Fully deprecate and archive a repository.",
+  "name": "repo",
+  "description": "Repository lifecycle — fully deprecate and archive a repository.",
   "version": "1.0.0",
   "author": {
     "name": "Sebastian Sulinski",

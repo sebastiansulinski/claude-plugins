@@ -1,0 +1,9 @@
+{
+  "name": "release",
+  "description": "Releases — run the full changelog, git tag, and GitHub release workflow.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

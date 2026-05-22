@@ -11,49 +11,43 @@
     {
       "name": "review",
       "source": "./review",
-      "description": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+      "description": "Critical review — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
       "category": "productivity"
     },
     {
-      "name": "good-morning",
-      "source": "./good-morning",
-      "description": "Resume work from the previous session — load memory, lessons, config, and the project's prompt, then propose next steps.",
+      "name": "session",
+      "source": "./session",
+      "description": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
       "category": "workflow"
     },
     {
-      "name": "call-it-a-day",
-      "source": "./call-it-a-day",
-      "description": "End-of-session capture — record state so the next session resumes with no context loss.",
-      "category": "workflow"
-    },
-    {
-      "name": "interrogate",
-      "source": "./interrogate",
-      "description": "Exhaustively interrogate project requirements through questioning — never writes code.",
+      "name": "repo",
+      "source": "./repo",
+      "description": "Repository lifecycle — fully deprecate and archive a repository.",
       "category": "productivity"
     },
     {
-      "name": "deprecate-repo",
-      "source": "./deprecate-repo",
-      "description": "Fully deprecate and archive a repository.",
+      "name": "release",
+      "source": "./release",
+      "description": "Releases — run the full changelog, git tag, and GitHub release workflow.",
       "category": "productivity"
     },
     {
-      "name": "query-analysis",
-      "source": "./query-analysis",
-      "description": "Read-only audit of Eloquent and query-builder usage in a Laravel repo — flags queries with measurable performance or memory improvements and writes findings to docs/analysis/.",
+      "name": "requirements",
+      "source": "./requirements",
+      "description": "Requirements gathering — exhaustively interrogate a project's requirements before any code is written.",
       "category": "productivity"
     },
     {
-      "name": "release-manager",
-      "source": "./release-manager",
-      "description": "Agent that runs the full release workflow — changelog, semantic-version git tag, and GitHub release.",
+      "name": "db",
+      "source": "./db",
+      "description": "Database tooling — read-only audit of Eloquent and query-builder usage, flagging performance and memory wins.",
       "category": "productivity"
     },
     {
-      "name": "dead-code-purger",
-      "source": "./dead-code-purger",
-      "description": "Agent that finds and safely removes dead code and unused dependencies — verified, categorised, and only after explicit approval.",
+      "name": "dead-code",
+      "source": "./dead-code",
+      "description": "Codebase hygiene — find and safely remove dead code and unused dependencies, only after explicit approval.",
       "category": "productivity"
     }
   ]

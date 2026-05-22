@@ -16,32 +16,31 @@ This registers under the marketplace name **`sebastiansulinski`** (set in
 
 ```
 /plugin install review@sebastiansulinski
-/plugin install good-morning@sebastiansulinski
-/plugin install call-it-a-day@sebastiansulinski
-/plugin install interrogate@sebastiansulinski
-/plugin install deprecate-repo@sebastiansulinski
-/plugin install query-analysis@sebastiansulinski
-/plugin install release-manager@sebastiansulinski
-/plugin install dead-code-purger@sebastiansulinski
+/plugin install session@sebastiansulinski
+/plugin install repo@sebastiansulinski
+/plugin install release@sebastiansulinski
+/plugin install requirements@sebastiansulinski
+/plugin install db@sebastiansulinski
+/plugin install dead-code@sebastiansulinski
 ```
 
 ## Plugins
 
-| Plugin             | Command(s)                    | What it does |
-|--------------------|-------------------------------|--------------|
-| `review`           | `/scrutinise`, `/plan-review` | Deep critical review of recent work, and multi-agent grounded review of a plan file. |
-| `good-morning`     | `/good-morning`               | Resume the previous session — reload memory, lessons, and context, then propose next steps. |
-| `call-it-a-day`    | `/call-it-a-day`              | End-of-session capture so the next session resumes with no context loss. |
-| `interrogate`      | `/interrogate`                | Ruthless requirements interrogation — exhaustive questions, never writes code. |
-| `deprecate-repo`   | `/deprecate-repo`             | Fully deprecate and archive a repository. |
-| `query-analysis`   | `/query-analysis`             | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
-| `release-manager`  | `/publish-release`            | Runs the full release workflow — changelog, semantic-version tag, GitHub release. |
-| `dead-code-purger` | `/purge-dead-code`            | Finds and safely removes dead code and unused dependencies — only after your approval. |
+Plugin commands are namespaced `plugin:command` — each reads as a `category:action` phrase.
 
-Three plugins also ship a subagent: `review` includes `scrutiniser` (used by
-both its commands), `release-manager` includes the agent `/publish-release`
-spawns, and `dead-code-purger` the agent `/purge-dead-code` spawns. All three
-agents can also be invoked directly via `subagent_type:`.
+| Plugin | Commands | What it does |
+|--------|----------|--------------|
+| `review` | `/review:scrutinise`, `/review:plan-review` | Deep critical review of recent work, and multi-agent grounded review of a plan file. |
+| `session` | `/session:good-morning`, `/session:call-it-a-day` | Resume the previous session, and capture end-of-session state so the next resumes cleanly. |
+| `repo` | `/repo:deprecate` | Fully deprecate and archive a repository. |
+| `release` | `/release:publish` | Run the full changelog → git tag → GitHub release workflow. |
+| `requirements` | `/requirements:interrogate` | Exhaustive requirements interrogation — never writes code. |
+| `db` | `/db:query-analysis` | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
+| `dead-code` | `/dead-code:purge` | Find and safely remove dead code and unused dependencies — only after your approval. |
+
+Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
+(`manager`), and `dead-code` (`purger`). Each is spawned by its plugin's
+command, and can also be invoked directly via `subagent_type:`.
 
 ## Updating
 
@@ -59,13 +58,12 @@ claude-plugins/
 │   ├── .claude-plugin/plugin.json    #   …each with its own manifest
 │   ├── commands/
 │   └── agents/
-├── good-morning/
-├── call-it-a-day/
-├── interrogate/
-├── deprecate-repo/
-├── query-analysis/
-├── release-manager/                  # /publish-release + agent
-└── dead-code-purger/                 # /purge-dead-code + agent
+├── session/
+├── repo/
+├── release/
+├── requirements/
+├── db/
+└── dead-code/
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`

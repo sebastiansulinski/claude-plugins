@@ -3,7 +3,7 @@ description: Find and safely remove dead code and unused dependencies — verifi
 argument-hint: [optional scope, e.g. "the auth module", "composer dependencies"]
 ---
 
-Spawn the `dead-code-purger` agent (via the Task tool) to find and remove dead code.
+Spawn the `purger` agent (via the Task tool) to find and remove dead code.
 
 **Scope to purge:** $ARGUMENTS
 

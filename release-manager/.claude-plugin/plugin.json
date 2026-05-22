@@ -1,9 +1,0 @@
-{
-  "name": "release-manager",
-  "description": "Agent that runs the full release workflow — changelog, semantic-version git tag, and GitHub release.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Sebastian Sulinski",
-    "email": "seb@sulinski.me"
-  }
-}

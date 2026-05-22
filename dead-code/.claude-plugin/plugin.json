@@ -1,0 +1,9 @@
+{
+  "name": "dead-code",
+  "description": "Codebase hygiene — find and safely remove dead code and unused dependencies, only after explicit approval.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

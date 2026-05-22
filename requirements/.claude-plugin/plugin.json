@@ -1,0 +1,9 @@
+{
+  "name": "requirements",
+  "description": "Requirements gathering — exhaustively interrogate a project's requirements before any code is written.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

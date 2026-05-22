@@ -1,9 +1,0 @@
-{
-  "name": "interrogate",
-  "description": "Exhaustively interrogate project requirements through questioning — never writes code.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Sebastian Sulinski",
-    "email": "seb@sulinski.me"
-  }
-}

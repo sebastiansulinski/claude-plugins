@@ -1,0 +1,9 @@
+{
+  "name": "db",
+  "description": "Database tooling — read-only audit of Eloquent and query-builder usage, flagging performance and memory wins.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}
