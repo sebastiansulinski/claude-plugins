@@ -5,7 +5,7 @@ A Claude Code plugin with two critical-review commands:
 - **`/scrutinise`** — deep, evidence-based critical review of recent work: bugs, design flaws, anti-patterns, missing tests, edge cases, security holes, inconsistencies. No skimming, no auto-fixing.
 - **`/plan-review`** — multi-agent grounded review of a plan file, run entirely locally so it can verify every claim against the actual codebase.
 
-Part of the [`seb` plugin marketplace](../README.md).
+Part of the [`claude-plugins` plugin marketplace](../README.md).
 
 ## `/scrutinise`
 
@@ -37,7 +37,7 @@ Both commands rely on the bundled `scrutiniser` subagent. It can also be invoked
 
 ```
 /plugin marketplace add sebastiansulinski/claude-plugins
-/plugin install review@seb
+/plugin install review@claude-plugins
 ```
 
 ## Layout
