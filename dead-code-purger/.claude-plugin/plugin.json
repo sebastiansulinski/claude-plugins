@@ -1,0 +1,9 @@
+{
+  "name": "dead-code-purger",
+  "description": "Agent that finds and safely removes dead code and unused dependencies — verified, categorised, and only after explicit approval.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

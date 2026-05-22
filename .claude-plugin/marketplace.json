@@ -5,7 +5,7 @@
     "email": "seb@sulinski.me"
   },
   "metadata": {
-    "description": "Sebastian Sulinski's personal Claude Code commands"
+    "description": "Sebastian Sulinski's personal Claude Code commands and agents"
   },
   "plugins": [
     {
@@ -42,6 +42,18 @@
       "name": "query-analysis",
       "source": "./query-analysis",
       "description": "Read-only audit of Eloquent and query-builder usage in a Laravel repo — flags queries with measurable performance or memory improvements and writes findings to docs/analysis/.",
+      "category": "productivity"
+    },
+    {
+      "name": "release-manager",
+      "source": "./release-manager",
+      "description": "Agent that runs the full release workflow — changelog, semantic-version git tag, and GitHub release.",
+      "category": "productivity"
+    },
+    {
+      "name": "dead-code-purger",
+      "source": "./dead-code-purger",
+      "description": "Agent that finds and safely removes dead code and unused dependencies — verified, categorised, and only after explicit approval.",
       "category": "productivity"
     }
   ]

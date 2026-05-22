@@ -1,7 +1,7 @@
 # claude-plugins
 
 The **`claude-plugins`** plugin marketplace — Sebastian Sulinski's personal
-Claude Code commands, bundled for native install across machines.
+Claude Code commands and agents, bundled for native install across machines.
 
 ## Install
 
@@ -21,21 +21,27 @@ This registers under the marketplace name **`claude-plugins`** (set in
 /plugin install interrogate@claude-plugins
 /plugin install deprecate-repo@claude-plugins
 /plugin install query-analysis@claude-plugins
+/plugin install release-manager@claude-plugins
+/plugin install dead-code-purger@claude-plugins
 ```
 
 ## Plugins
 
-| Plugin           | Command(s)                    | What it does |
-|------------------|-------------------------------|--------------|
-| `review`         | `/scrutinise`, `/plan-review` | Deep critical review of recent work, and multi-agent grounded review of a plan file. |
-| `good-morning`   | `/good-morning`               | Resume the previous session — reload memory, lessons, and context, then propose next steps. |
-| `call-it-a-day`  | `/call-it-a-day`              | End-of-session capture so the next session resumes with no context loss. |
-| `interrogate`    | `/interrogate`                | Ruthless requirements interrogation — exhaustive questions, never writes code. |
-| `deprecate-repo` | `/deprecate-repo`             | Fully deprecate and archive a repository. |
-| `query-analysis` | `/query-analysis`             | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
+| Plugin             | Command(s)                    | What it does |
+|--------------------|-------------------------------|--------------|
+| `review`           | `/scrutinise`, `/plan-review` | Deep critical review of recent work, and multi-agent grounded review of a plan file. |
+| `good-morning`     | `/good-morning`               | Resume the previous session — reload memory, lessons, and context, then propose next steps. |
+| `call-it-a-day`    | `/call-it-a-day`              | End-of-session capture so the next session resumes with no context loss. |
+| `interrogate`      | `/interrogate`                | Ruthless requirements interrogation — exhaustive questions, never writes code. |
+| `deprecate-repo`   | `/deprecate-repo`             | Fully deprecate and archive a repository. |
+| `query-analysis`   | `/query-analysis`             | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
+| `release-manager`  | `/publish-release`            | Runs the full release workflow — changelog, semantic-version tag, GitHub release. |
+| `dead-code-purger` | `/purge-dead-code`            | Finds and safely removes dead code and unused dependencies — only after your approval. |
 
-The `review` plugin also ships the `scrutiniser` subagent, which both its
-commands use and which can be invoked directly via `subagent_type: scrutiniser`.
+Three plugins also ship a subagent: `review` includes `scrutiniser` (used by
+both its commands), `release-manager` includes the agent `/publish-release`
+spawns, and `dead-code-purger` the agent `/purge-dead-code` spawns. All three
+agents can also be invoked directly via `subagent_type:`.
 
 ## Updating
 
@@ -57,9 +63,11 @@ claude-plugins/
 ├── call-it-a-day/
 ├── interrogate/
 ├── deprecate-repo/
-└── query-analysis/
+├── query-analysis/
+├── release-manager/                  # /publish-release + agent
+└── dead-code-purger/                 # /purge-dead-code + agent
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
-manifest plus `commands/` (and `agents/` where needed). To add a new plugin,
-create the directory and register it in `.claude-plugin/marketplace.json`.
+manifest plus `commands/` and/or `agents/`. To add a new plugin, create the
+directory and register it in `.claude-plugin/marketplace.json`.
