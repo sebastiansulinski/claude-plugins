@@ -1,0 +1,9 @@
+{
+  "name": "good-morning",
+  "description": "Resume work from the previous session — load memory, lessons, config, and the project's prompt, then propose next steps.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}

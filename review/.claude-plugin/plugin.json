@@ -1,0 +1,9 @@
+{
+  "name": "review",
+  "description": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  }
+}
