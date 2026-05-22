@@ -1,7 +1,7 @@
 # claude-plugins
 
-The **`claude-plugins`** plugin marketplace — Sebastian Sulinski's personal
-Claude Code commands and agents, bundled for native install across machines.
+Sebastian Sulinski's personal Claude Code plugin marketplace — commands and
+agents bundled for native install across machines.
 
 ## Install
 
@@ -11,18 +11,18 @@ Add the marketplace once:
 /plugin marketplace add sebastiansulinski/claude-plugins
 ```
 
-This registers under the marketplace name **`claude-plugins`** (set in
+This registers under the marketplace name **`sebastiansulinski`** (set in
 `.claude-plugin/marketplace.json`). Then install whichever plugins you want:
 
 ```
-/plugin install review@claude-plugins
-/plugin install good-morning@claude-plugins
-/plugin install call-it-a-day@claude-plugins
-/plugin install interrogate@claude-plugins
-/plugin install deprecate-repo@claude-plugins
-/plugin install query-analysis@claude-plugins
-/plugin install release-manager@claude-plugins
-/plugin install dead-code-purger@claude-plugins
+/plugin install review@sebastiansulinski
+/plugin install good-morning@sebastiansulinski
+/plugin install call-it-a-day@sebastiansulinski
+/plugin install interrogate@sebastiansulinski
+/plugin install deprecate-repo@sebastiansulinski
+/plugin install query-analysis@sebastiansulinski
+/plugin install release-manager@sebastiansulinski
+/plugin install dead-code-purger@sebastiansulinski
 ```
 
 ## Plugins
@@ -46,8 +46,8 @@ agents can also be invoked directly via `subagent_type:`.
 ## Updating
 
 ```
-/plugin marketplace update claude-plugins   # refresh the catalogue
-/plugin update review@claude-plugins        # update a single plugin
+/plugin marketplace update sebastiansulinski   # refresh the catalogue
+/plugin update review@sebastiansulinski        # update a single plugin
 ```
 
 ## Layout
