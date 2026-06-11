@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-11
+
+### Added
+
+- **`worktree` plugin** — isolated git worktrees for parallel agents, on plain repositories and submodules:
+  - `/worktree:create` — creates a worktree on its own branch (base resolved local-then-remote: `develop` → `origin/HEAD` → `main` → `master`), bootstraps it (`.env` copy, `composer install`, optional `npm ci`, optional post-setup hook), and never touches the main checkout. For submodules the destination defaults to a sibling of the superproject.
+  - `/worktree:remove` — removes a worktree resolved from git's own metadata; refuses dirty worktrees without `--force`, refuses worktrees the tool did not create without `--unmanaged`, and judges `--delete-branch` merged-ness against the base recorded at create time, never the main checkout's HEAD.
+  - `/worktree:list` — branch, dirty state, created-by-tool marker, and merge status per worktree.
+  - `/worktree:init` — guided per-project `.worktree.json` written through the validating `config --write` script surface.
+  - Ships `scripts/worktree.sh` (the deterministic core, usable by any tool that can run a shell command) and a fixture-based test harness (`tests/run.sh`, 138 assertions, plain-repository and superproject-plus-submodule fixtures, no network).
+
 ## [1.0.0] - 2026-05-22
 
 ### Added

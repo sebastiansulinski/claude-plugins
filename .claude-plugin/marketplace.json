@@ -49,6 +49,12 @@
       "source": "./dead-code",
       "description": "Codebase hygiene — find and safely remove dead code and unused dependencies, only after explicit approval.",
       "category": "productivity"
+    },
+    {
+      "name": "worktree",
+      "source": "./worktree",
+      "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+      "category": "workflow"
     }
   ]
 }
