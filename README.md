@@ -248,3 +248,133 @@ printf '%s' '{
 With that configuration committed, `wt create checkout-flow` produces
 branch `plan/checkout-flow` instead of `wt/checkout-flow`. Most
 repositories need no configuration at all — conventions cover the common case.
+
+### Post-setup hook recipes (`.worktree-setup.sh`)
+
+The hook is the plugin's extension point: a committed, executable
+`.worktree-setup.sh` at the repository root runs **inside each new worktree**
+after bootstrap (override the filename with the `postSetup` key in
+`.worktree.json`). Two contract details shape every recipe:
+
+- **A failing hook fails the create** — the worktree is left in place for
+  inspection, but the command exits non-zero. So a recipe that only applies
+  to some layouts must detect "not applicable" and `exit 0`, never error.
+- **It runs in the worktree's directory on the worktree's branch** — a hook
+  edit committed on a plan branch does not change what runs for the next
+  worktree created from the base branch.
+
+The recipes below are real setups, generalised. Each is a complete hook; to
+combine them, paste the bodies into one script.
+
+#### Recipe 1 — shared docs across a submodule's worktrees
+
+The setup this recipe comes from: a superproject (`platform/`) holds an app
+submodule (`app/`) plus planning documents in `platform/docs/plans/` and
+architectural-decision logs in `platform/docs/context/`. Those documents are
+the **coordination record between parallel sessions**, so they must exist as
+a single copy — but a worktree of the submodule lives outside the
+superproject tree and cannot see them by any relative path.
+
+The fix: derive the superproject root from the git common directory (a
+submodule's is always `<superproject>/.git/modules/<name>`) and symlink the
+shared directories into the checkout. One repo-relative path form —
+`plans/…`, `context/…` — then resolves identically in the main checkout and
+every worktree:
+
+```sh
+#!/bin/sh
+# .worktree-setup.sh — link the superproject's shared docs into this
+# checkout. Run it once manually in the MAIN checkout too, so the same
+# paths work everywhere. A non-submodule clone is a silent no-op.
+
+set -eu
+
+common=$(git rev-parse --git-common-dir)
+
+case $common in
+    */.git/modules/*)
+        super=${common%/.git/modules/*}
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+for name in plans context; do
+    if [ -d "$super/docs/$name" ]; then
+        ln -sfn "$super/docs/$name" "$name"
+        echo "linked $name -> $super/docs/$name"
+    fi
+done
+```
+
+Add the link names to `.gitignore` (`/plans`, `/context`). **Never commit the
+symlinks themselves**: a committed symlink stores a fixed relative target,
+which resolves from the main checkout's location and breaks from every
+worktree — the hook recreates the links with absolute targets per checkout
+instead.
+
+Two conventions make this pay off in plan documents: write paths to the
+repository's own files **repo-relative** (`src/…` means "in your checkout" —
+the only safe meaning when several working copies exist), and write paths to
+the shared docs through the link names (`plans/…`, `context/…`).
+
+#### Recipe 2 — build the frontend bundle so browser tests work immediately
+
+Bootstrap installs dependencies but deliberately never builds. If your test
+suite serves a built bundle (Vite manifest, compiled assets), a fresh
+worktree fails browser tests until someone remembers to build — make the
+hook remember instead:
+
+```sh
+#!/bin/sh
+# .worktree-setup.sh — produce the built bundle the browser-test server
+# serves. Skips silently when the project has no build script.
+
+set -eu
+
+if [ -f package.json ] && grep -q '"build"' package.json; then
+    npm run build
+fi
+```
+
+Pair it with `"bootstrap": { "npm": true }` in `.worktree.json` (the build
+needs `node_modules`). The trade-off is creation time — for a quick probe
+worktree, `wt create probe --no-npm` skips both the install and, because the
+build script then fails the `node_modules` check, effectively the build.
+
+#### Recipe 3 — per-worktree environment isolation (Laravel example)
+
+Bootstrap copies the main checkout's `.env` verbatim — which means every
+worktree points at the SAME development database and storage as the main
+checkout. Fine for suites that override the connection (an in-memory SQLite
+test database), dangerous for anything touching the dev services. Give each
+worktree its own writable state:
+
+```sh
+#!/bin/sh
+# .worktree-setup.sh — point this worktree at its own SQLite database and
+# storage so parallel sessions cannot trample the main checkout's data.
+
+set -eu
+
+[ -f .env ] || exit 0
+
+db="$PWD/database/worktree.sqlite"
+
+mkdir -p database
+touch "$db"
+
+sed -i '' \
+    -e "s|^DB_CONNECTION=.*|DB_CONNECTION=sqlite|" \
+    -e "s|^DB_DATABASE=.*|DB_DATABASE=$db|" \
+    .env
+
+php artisan key:generate --force --no-interaction
+php artisan storage:link --force --no-interaction
+php artisan migrate --force --no-interaction
+```
+
+(The `sed -i ''` form is macOS; on Linux drop the empty string.) The same
+shape works for any stack: rewrite the copied environment so every stateful
+path or port is unique to the worktree, then initialise it.
