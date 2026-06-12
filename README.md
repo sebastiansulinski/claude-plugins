@@ -333,15 +333,16 @@ hook remember instead:
 
 set -eu
 
-if [ -f package.json ] && grep -q '"build"' package.json; then
+if [ -f package.json ] && [ -d node_modules ] && grep -q '"build"' package.json; then
     npm run build
 fi
 ```
 
 Pair it with `"bootstrap": { "npm": true }` in `.worktree.json` (the build
 needs `node_modules`). The trade-off is creation time — for a quick probe
-worktree, `wt create probe --no-npm` skips both the install and, because the
-build script then fails the `node_modules` check, effectively the build.
+worktree, `wt create probe --no-npm` skips the install, and the hook's
+`node_modules` guard then skips the build with it instead of failing the
+create.
 
 #### Recipe 3 — per-worktree environment isolation (Laravel example)
 
