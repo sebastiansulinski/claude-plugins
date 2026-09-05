@@ -81,3 +81,11 @@ GitHub archival, production query measurements and interactive user-answer cycle
 Remote catalogue import and the actual repository release are deployment checks performed separately from
 these fixtures. Local catalogue registration/installation used the user's approved native namespace;
 source repositories and runtime fixtures were isolated, but the Codex profile itself was not replaced.
+
+## GitHub import verification
+
+After pushing tested main, adding the Git URL initially reused the pre-existing legacy marketplace.
+Removed the seven installed legacy Codex copies and old catalogue registration, then replaced the local
+native catalogue registration with the same GitHub URL. Codex cloned it successfully and identified
+sebastiansulinski-codex with all eight native sources. Claude Code installations were not touched.
+This source-deduplication behaviour is documented in the migration instructions.

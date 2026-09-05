@@ -6,7 +6,9 @@ workflows packaged natively for each host, in one repository.
 ## Codex
 
 The native catalogue is `.agents/plugins/marketplace.json`, named
-**`sebastiansulinski-codex`**. Add this repository once, then install the plugins:
+**`sebastiansulinski-codex`**. Add this repository once, then install the plugins.
+If Codex reports the old `sebastiansulinski` catalogue is already added, follow
+[Migrate legacy Codex imports](#migrate-legacy-codex-imports) below first:
 
 ```sh
 codex plugin marketplace add sebastiansulinski/claude-plugins
@@ -56,18 +58,37 @@ Repeat the second command for each installed plugin you want to update, then sta
 a new task. Repository releases and per-plugin versions are separate: the first
 native packages are version `1.0.0`, introduced in repository release `v1.2.0`.
 
-If you previously imported the Claude catalogue into Codex, install and verify the
-native packages first. Then remove only the legacy Codex copies to avoid duplicate
-skills:
+### Migrate legacy Codex imports
+
+If adding the GitHub source reports that marketplace `sebastiansulinski` is
+already added, Codex is reusing the old Claude catalogue registration. It must be
+removed before the same repository URL can resolve the native catalogue.
+
+First inspect the installed legacy copies:
 
 ```sh
-for plugin in review session repo release requirements db dead-code worktree; do
-    codex plugin remove "$plugin@sebastiansulinski"
-done
+codex plugin list --marketplace sebastiansulinski
 ```
 
-Only remove legacy plugins you actually installed. This does not uninstall plugins
-from Claude Code.
+Remove each **installed** legacy plugin with `codex plugin remove
+<plugin>@sebastiansulinski`. This can include any of the eight plugins, including
+`worktree`; skip plugins that are not installed. For example:
+
+```sh
+codex plugin remove session@sebastiansulinski
+```
+
+After removing the installed legacy copies, replace the catalogue registration:
+
+```sh
+codex plugin marketplace remove sebastiansulinski
+codex plugin marketplace add sebastiansulinski/claude-plugins
+```
+
+Run the eight-plugin installation loop above and start a new task. This migration
+affects Codex only; Claude Code's catalogue and installations are separate.
+If you also registered a local `sebastiansulinski-codex` source for testing,
+remove that marketplace registration before adding the Git source.
 
 ### Local development and verification
 
