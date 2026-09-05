@@ -2,3 +2,5 @@
 .DS_Store
 docs/
 tasks/
+.venv/
+__pycache__/

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-05
+
+### Added
+
+- **Native Codex support for all eight plugins** — 13 skills covering review, session handoffs,
+  repository deprecation, releases, requirements, query analysis, dead-code cleanup and worktrees.
+- Codex marketplace `sebastiansulinski-codex` in `.agents/plugins/marketplace.json`, with
+  self-contained native packages under `plugins/`. Initial native package versions are `1.0.0`.
+- Codex-specific instruction discovery, input handling, delegation and package-relative resources.
+  The three specialist agent procedures are preserved as bundled references.
+- Package contract tests, installed-copy worktree tests, independent workflow acceptance records,
+  and deterministic per-plugin release ZIP generation.
+- Worktree runtime synchronization and equality verification, preserving the existing shell engine.
+
+### Changed
+
+- Installation and update documentation now covers both Claude Code and Codex, including migration
+  from legacy Claude imports in Codex. Existing Claude plugin paths and behaviour are unchanged.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added

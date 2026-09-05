@@ -1,9 +1,123 @@
 # claude-plugins
 
-Sebastian Sulinski's personal Claude Code plugin marketplace — commands and
-agents bundled for native install across machines.
+Sebastian Sulinski's personal plugins for Claude Code and Codex — the same
+workflows packaged natively for each host, in one repository.
 
-## Install
+## Codex
+
+The native catalogue is `.agents/plugins/marketplace.json`, named
+**`sebastiansulinski-codex`**. Add this repository once, then install the plugins:
+
+```sh
+codex plugin marketplace add sebastiansulinski/claude-plugins
+
+for plugin in review session repo release requirements db dead-code worktree; do
+    codex plugin add "$plugin@sebastiansulinski-codex"
+done
+```
+
+Start a **new Codex task/session** after installation. Select a skill from the skill
+picker, mention its qualified name, or ask for the corresponding workflow:
+
+| Plugin | Codex skills |
+| --- | --- |
+| review | `review:scrutinise`, `review:plan-review` |
+| session | `session:good-morning`, `session:call-it-a-day` |
+| repo | `repo:deprecate` |
+| release | `release:publish` |
+| requirements | `requirements:interrogate` |
+| db | `db:query-analysis` |
+| dead-code | `dead-code:purge` |
+| worktree | `worktree:create`, `worktree:init`, `worktree:list`, `worktree:remove` |
+
+For example: “Use `session:good-morning` to resume this project” or
+“Use `review:plan-review` on `docs/plans/example.md`.”
+
+The Codex packages live under `plugins/<name>/`; each has a
+`.codex-plugin/plugin.json` manifest and `skills/<name>/SKILL.md` entry points.
+Specialist review/release/cleanup procedures are bundled references. Codex uses its
+available delegation tools; a constrained host can perform the review passes
+sequentially and disclose that limitation. Claude's named agent registrations and
+model names are not required.
+
+Session skills discover applicable `AGENTS.md` instructions and the project's
+existing handoff documents. They do not assume a private memory directory.
+Review/audit requests retain their read-only scope; cleanup and archival retain
+their explicit approval boundaries.
+
+### Update Codex plugins
+
+```sh
+codex plugin marketplace upgrade sebastiansulinski-codex
+codex plugin add session@sebastiansulinski-codex
+```
+
+Repeat the second command for each installed plugin you want to update, then start
+a new task. Repository releases and per-plugin versions are separate: the first
+native packages are version `1.0.0`, introduced in repository release `v1.2.0`.
+
+If you previously imported the Claude catalogue into Codex, install and verify the
+native packages first. Then remove only the legacy Codex copies to avoid duplicate
+skills:
+
+```sh
+for plugin in review session repo release requirements db dead-code worktree; do
+    codex plugin remove "$plugin@sebastiansulinski"
+done
+```
+
+Only remove legacy plugins you actually installed. This does not uninstall plugins
+from Claude Code.
+
+### Local development and verification
+
+Register the local checkout instead of the Git source while developing:
+
+```sh
+codex plugin marketplace add /absolute/path/to/claude-plugins
+```
+
+The catalogue name is the same for local and Git sources. Check
+`codex plugin marketplace list` before switching; remove the configured native
+marketplace before adding the alternative source if your CLI reports a conflict.
+
+Installation and fresh-process discovery were checked with Codex CLI `0.137.0`.
+If that older CLI rejects `model_reasoning_effort=ultra` from a newer app's config,
+use a compatible newer CLI or add `-c model_reasoning_effort=xhigh` to that command.
+You do not need to change your global reasoning preference.
+
+Run the package contracts and existing shell harness:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -B -m unittest discover -s tests -p 'test_codex_*.py' -v
+bash worktree/tests/run.sh
+python3 scripts/sync-codex-worktree.py --check
+```
+
+The worktree runtime remains canonical at `worktree/scripts/worktree.sh`. After a
+deliberate engine change, run `python3 scripts/sync-codex-worktree.py` to update its
+native package copy, then rerun checks. No installed plugin depends on a symlink
+back to this repository.
+
+The shared runtime's unconfigured branch prefix remains `wt/`. Native
+`worktree:init` recommends `codex/` when explicitly configuring a project;
+existing `.worktree.json` settings win. Creating a worktree does not silently
+rewrite the original checkout to change this default.
+
+Build the eight self-contained ZIPs attached to releases with:
+
+```sh
+python3 scripts/package-codex.py --output /tmp/codex-plugin-archives
+```
+
+Each ZIP contains a native manifest, skills and all required references/scripts.
+Use the Git marketplace for normal Codex installation. ZIPs are also available
+for archiving or import surfaces that accept native plugin archives; their
+existence does not imply a public OpenAI directory listing.
+
+## Claude Code installation
 
 Add the marketplace once:
 
@@ -25,7 +139,7 @@ This registers under the marketplace name **`sebastiansulinski`** (set in
 /plugin install worktree@sebastiansulinski
 ```
 
-## Plugins
+## Claude Code commands
 
 Plugin commands are namespaced `plugin:command` — each reads as a `category:action` phrase.
 
@@ -44,14 +158,14 @@ Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
 (`manager`), and `dead-code` (`purger`). Each is spawned by its plugin's
 command, and can also be invoked directly via `subagent_type:`.
 
-## Updating
+## Updating Claude Code plugins
 
 ```
 /plugin marketplace update sebastiansulinski   # refresh the catalogue
 /plugin update review@sebastiansulinski        # update a single plugin
 ```
 
-## Layout
+## Claude Code layout
 
 ```
 claude-plugins/

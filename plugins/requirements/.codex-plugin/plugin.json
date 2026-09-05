@@ -1,0 +1,23 @@
+{
+  "name": "requirements",
+  "version": "1.0.0",
+  "description": "Requirements gathering — exhaustively interrogate a project's requirements before any code is written.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Requirements",
+    "shortDescription": "Requirements gathering",
+    "longDescription": "Requirements gathering — exhaustively interrogate a project's requirements before any code is written.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Clarify the requirements before planning implementation."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

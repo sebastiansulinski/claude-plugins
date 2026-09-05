@@ -1,0 +1,24 @@
+{
+  "name": "review",
+  "version": "1.0.0",
+  "description": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Review",
+    "shortDescription": "Critical-review commands",
+    "longDescription": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Review my recent changes for defects.",
+      "Review this plan against the source code."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

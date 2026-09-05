@@ -1,0 +1,23 @@
+{
+  "name": "repo",
+  "version": "1.0.0",
+  "description": "Repository lifecycle — fully deprecate and archive a repository.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Repo",
+    "shortDescription": "Repository lifecycle",
+    "longDescription": "Repository lifecycle — fully deprecate and archive a repository.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Prepare this repository for deprecation."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "db",
+  "version": "1.0.0",
+  "description": "Database tooling — read-only audit of Eloquent and query-builder usage, flagging performance and memory wins.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Db",
+    "shortDescription": "Database tooling",
+    "longDescription": "Database tooling — read-only audit of Eloquent and query-builder usage, flagging performance and memory wins.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Audit database queries for performance improvements."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "worktree",
+  "version": "1.0.0",
+  "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Worktree",
+    "shortDescription": "Parallel workspaces",
+    "longDescription": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Create an isolated worktree for this task.",
+      "List this repository’s worktrees."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

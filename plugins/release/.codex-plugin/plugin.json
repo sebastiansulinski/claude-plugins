@@ -1,0 +1,23 @@
+{
+  "name": "release",
+  "version": "1.0.0",
+  "description": "Releases — run the full changelog, git tag, and GitHub release workflow.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Release",
+    "shortDescription": "Releases",
+    "longDescription": "Releases — run the full changelog, git tag, and GitHub release workflow.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Publish a release following this repository’s rules."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "dead-code",
+  "version": "1.0.0",
+  "description": "Codebase hygiene — find and safely remove dead code and unused dependencies, only after explicit approval.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Dead Code",
+    "shortDescription": "Codebase hygiene",
+    "longDescription": "Codebase hygiene — find and safely remove dead code and unused dependencies, only after explicit approval.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Investigate unused code and propose safe removals."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}

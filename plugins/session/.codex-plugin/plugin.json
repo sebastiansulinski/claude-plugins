@@ -1,0 +1,24 @@
+{
+  "name": "session",
+  "version": "1.0.0",
+  "description": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Session",
+    "shortDescription": "Session bookends",
+    "longDescription": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Resume work from the project handoff.",
+      "Capture a handoff for the next session."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#codex"
+}
