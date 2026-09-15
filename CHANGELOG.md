@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-15
+
+### Added
+
+- **`explain` plugin** — one read-only skill that turns the previous outcome, or a named
+  subject, into a plain-language explanation for a non-technical reader: what changed,
+  what it fixes, and what they will notice, with concrete examples. Claude Code:
+  `/explain:explain`, also reachable as the bare `/explain`; user-invocable only, with no
+  automatic invocation by the model. Codex: `explain:explain`. Initial native package
+  version is `1.0.0`. Acceptance scenarios and the execution record are in
+  `tests/acceptance/explain.md`.
+
+### Changed
+
+- Contract tests now accept the `skills/` layout for Claude Code packages, and fail
+  cleanly when a Codex manifest is missing.
+- Hard-coded plugin counts were removed from the README, the packaging script's help
+  text, and a test name, so they no longer need updating each time a plugin is added.
+
 ## [1.2.0] - 2026-09-05
 
 ### Added
