@@ -43,7 +43,7 @@ def package_plugins(output: Path) -> list[Path]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True, help="Directory for the eight plugin ZIPs")
+    parser.add_argument("--output", type=Path, required=True, help="Directory for the plugin ZIPs (one per plugin)")
     arguments = parser.parse_args()
     for archive_path in package_plugins(arguments.output):
         print(archive_path)

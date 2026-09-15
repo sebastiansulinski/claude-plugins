@@ -20,11 +20,12 @@ EXPECTED = {
     "db": {"query-analysis"},
     "dead-code": {"purge"},
     "worktree": {"create", "init", "list", "remove"},
+    "explain": {"explain"},
 }
 
 
 class CodexPackagesTest(unittest.TestCase):
-    def test_catalogue_preserves_all_eight_plugin_groups(self):
+    def test_catalogue_preserves_all_plugin_groups(self):
         catalogue = json.loads((ROOT / ".agents/plugins/marketplace.json").read_text())
         original = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
         self.assertEqual(catalogue["name"], "sebastiansulinski-codex")
@@ -42,7 +43,11 @@ class CodexPackagesTest(unittest.TestCase):
     def test_all_commands_have_native_skill_entrypoints(self):
         for plugin, expected in EXPECTED.items():
             with self.subTest(plugin=plugin):
-                self.assertEqual({path.stem for path in (ROOT / plugin / "commands").glob("*.md")}, expected)
+                claude_skills = list((ROOT / plugin / "skills").glob("*/SKILL.md"))
+                for path in claude_skills:
+                    self.assertEqual(yaml.safe_load(path.read_text().split("---", 2)[1])["name"], path.parent.name)
+                entrypoints = {path.stem for path in (ROOT / plugin / "commands").glob("*.md")}
+                self.assertEqual(entrypoints | {path.parent.name for path in claude_skills}, expected)
                 skills = list((ROOT / "plugins" / plugin / "skills").glob("*/SKILL.md"))
                 self.assertEqual({path.parent.name for path in skills}, expected)
                 for path in skills:
@@ -60,7 +65,9 @@ class CodexPackagesTest(unittest.TestCase):
         for plugin in EXPECTED:
             with self.subTest(plugin=plugin):
                 package = ROOT / "plugins" / plugin
-                manifest = json.loads((package / ".codex-plugin/plugin.json").read_text())
+                manifest_path = package / ".codex-plugin/plugin.json"
+                self.assertTrue(manifest_path.is_file(), plugin)
+                manifest = json.loads(manifest_path.read_text())
                 self.assertEqual(manifest["name"], plugin)
                 self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
                 self.assertEqual(manifest["author"]["name"], "Sebastian Sulinski")

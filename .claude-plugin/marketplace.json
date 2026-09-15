@@ -55,6 +55,12 @@
       "source": "./worktree",
       "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
       "category": "workflow"
+    },
+    {
+      "name": "explain",
+      "source": "./explain",
+      "description": "Plain-language explanations — turn the previous outcome or a named subject into an explanation a non-technical reader can follow: what changed, what it fixes, and what they will notice. Read-only.",
+      "category": "productivity"
     }
   ]
 }

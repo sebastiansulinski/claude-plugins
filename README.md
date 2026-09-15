@@ -13,7 +13,7 @@ If Codex reports the old `sebastiansulinski` catalogue is already added, follow
 ```sh
 codex plugin marketplace add sebastiansulinski/claude-plugins
 
-for plugin in review session repo release requirements db dead-code worktree; do
+for plugin in review session repo release requirements db dead-code worktree explain; do
     codex plugin add "$plugin@sebastiansulinski-codex"
 done
 ```
@@ -31,9 +31,11 @@ picker, mention its qualified name, or ask for the corresponding workflow:
 | db | `db:query-analysis` |
 | dead-code | `dead-code:purge` |
 | worktree | `worktree:create`, `worktree:init`, `worktree:list`, `worktree:remove` |
+| explain | `explain:explain` |
 
-For example: “Use `session:good-morning` to resume this project” or
-“Use `review:plan-review` on `docs/plans/example.md`.”
+For example: “Use `session:good-morning` to resume this project”,
+“Use `review:plan-review` on `docs/plans/example.md`”, or
+“Use `explain:explain` to explain the last result for a non-technical reader.”
 
 The Codex packages live under `plugins/<name>/`; each has a
 `.codex-plugin/plugin.json` manifest and `skills/<name>/SKILL.md` entry points.
@@ -71,7 +73,7 @@ codex plugin list --marketplace sebastiansulinski
 ```
 
 Remove each **installed** legacy plugin with `codex plugin remove
-<plugin>@sebastiansulinski`. This can include any of the eight plugins, including
+<plugin>@sebastiansulinski`. This can include any of the plugins, including
 `worktree`; skip plugins that are not installed. For example:
 
 ```sh
@@ -85,7 +87,7 @@ codex plugin marketplace remove sebastiansulinski
 codex plugin marketplace add sebastiansulinski/claude-plugins
 ```
 
-Run the eight-plugin installation loop above and start a new task. This migration
+Run the installation loop above and start a new task. This migration
 affects Codex only; Claude Code's catalogue and installations are separate.
 If you also registered a local `sebastiansulinski-codex` source for testing,
 remove that marketplace registration before adding the Git source.
@@ -127,7 +129,7 @@ The shared runtime's unconfigured branch prefix remains `wt/`. Native
 existing `.worktree.json` settings win. Creating a worktree does not silently
 rewrite the original checkout to change this default.
 
-Build the eight self-contained ZIPs attached to releases with:
+Build the self-contained ZIPs (one per plugin) attached to releases with:
 
 ```sh
 python3 scripts/package-codex.py --output /tmp/codex-plugin-archives
@@ -158,6 +160,7 @@ This registers under the marketplace name **`sebastiansulinski`** (set in
 /plugin install db@sebastiansulinski
 /plugin install dead-code@sebastiansulinski
 /plugin install worktree@sebastiansulinski
+/plugin install explain@sebastiansulinski
 ```
 
 ## Claude Code commands
@@ -174,6 +177,7 @@ Plugin commands are namespaced `plugin:command` — each reads as a `category:ac
 | `db` | `/db:query-analysis` | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
 | `dead-code` | `/dead-code:purge` | Find and safely remove dead code and unused dependencies — only after your approval. |
 | `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init` | Isolated git worktrees for parallel agents — works on plain repositories and submodules. |
+| `explain` | `/explain:explain` (also `/explain`) | Plain-language explanation of the previous outcome or a named subject for a non-technical reader — what changed, what it fixes, what you will notice. Read-only. |
 
 Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
 (`manager`), and `dead-code` (`purger`). Each is spawned by its plugin's
@@ -201,12 +205,15 @@ claude-plugins/
 ├── requirements/
 ├── db/
 ├── dead-code/
-└── worktree/                         # also ships scripts/ and tests/
+├── worktree/                         # also ships scripts/ and tests/
+└── explain/                          # single skill: skills/explain/SKILL.md
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
-manifest plus `commands/` and/or `agents/`. To add a new plugin, create the
-directory and register it in `.claude-plugin/marketplace.json`.
+manifest plus `commands/` or `skills/`, and optionally `agents/`. `explain` uses
+the `skills/` layout, so its command also answers to the bare `/explain` while no
+other command claims that name. To add a new plugin, create the directory and
+register it in `.claude-plugin/marketplace.json`.
 
 ## The `worktree` plugin
 
