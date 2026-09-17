@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-17
+
+### Added
+
+- **`review:plan-verify`** — a third entry point on the review plugin that verifies a plan
+  has been fully and correctly implemented. It maps the workspace first (main checkout,
+  linked worktrees, superproject, submodules and their worktrees) and resolves where the
+  plan and the implementation live rather than assuming the current directory, turns the
+  plan into a numbered checklist of every promise, and runs three reviewers in parallel: a
+  coverage verifier, the scrutiniser with test-adequacy ownership, and a verification
+  runner that executes only the project's own designated checks under its test
+  configuration. The synthesis (`ultrathink` on Claude Code) produces a computable verdict
+  with a coverage line, reporting a plain-language summary first, then the technical
+  report. Read-only. Named `plan-verify` rather than `verify` because Claude Code ships a
+  built-in skill named `verify` that owns the bare name. Claude Code: `/review:plan-verify`,
+  also reachable as the bare `/plan-verify`; user-invocable only. Codex:
+  `review:plan-verify`. Acceptance scenarios and the print-mode execution record are in
+  `tests/acceptance/plan-verify.md`.
+
+### Changed
+
+- Review plugin manifests bumped to `1.1.0` on both hosts; the review plugin's
+  descriptions and its README now use namespaced command names throughout.
+- The `scrutinise` argument hint no longer uses an abbreviation.
+
 ## [1.3.0] - 2026-09-15
 
 ### Added
