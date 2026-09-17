@@ -1,6 +1,6 @@
 ---
 description: Run a deep critical review of recent work — bugs, design, anti-patterns, missing tests, edge cases. No skimming.
-argument-hint: [optional scope, e.g. "today's commits", "the auth module", "the work in this session"]
+argument-hint: [optional scope, for example "today's commits", "the auth module", "the work in this session"]
 ---
 
 Spawn the `scrutiniser` agent (via the Task tool) to perform a forensic critical review.

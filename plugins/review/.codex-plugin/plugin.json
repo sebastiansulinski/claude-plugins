@@ -1,7 +1,7 @@
 {
   "name": "review",
-  "version": "1.0.0",
-  "description": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+  "version": "1.1.0",
+  "description": "Critical review — /review:scrutinise for deep forensic review of recent work, /review:plan-review for multi-agent grounded review of a plan file, /review:plan-verify to confirm a plan was fully and correctly implemented.",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"
@@ -9,14 +9,15 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Review",
-    "shortDescription": "Critical-review commands",
-    "longDescription": "Critical-review commands — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+    "shortDescription": "Critical review",
+    "longDescription": "Critical review — /review:scrutinise for deep forensic review of recent work, /review:plan-review for multi-agent grounded review of a plan file, /review:plan-verify to confirm a plan was fully and correctly implemented.",
     "developerName": "Sebastian Sulinski",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": [
       "Review my recent changes for defects.",
-      "Review this plan against the source code."
+      "Review this plan against the source code.",
+      "Verify that this plan has been fully implemented."
     ]
   },
   "repository": "https://github.com/sebastiansulinski/claude-plugins",

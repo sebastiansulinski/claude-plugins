@@ -23,7 +23,7 @@ picker, mention its qualified name, or ask for the corresponding workflow:
 
 | Plugin | Codex skills |
 | --- | --- |
-| review | `review:scrutinise`, `review:plan-review` |
+| review | `review:scrutinise`, `review:plan-review`, `review:plan-verify` |
 | session | `session:good-morning`, `session:call-it-a-day` |
 | repo | `repo:deprecate` |
 | release | `release:publish` |
@@ -169,7 +169,7 @@ Plugin commands are namespaced `plugin:command` — each reads as a `category:ac
 
 | Plugin | Commands | What it does |
 |--------|----------|--------------|
-| `review` | `/review:scrutinise`, `/review:plan-review` | Deep critical review of recent work, and multi-agent grounded review of a plan file. |
+| `review` | `/review:scrutinise`, `/review:plan-review`, `/review:plan-verify` (also `/plan-verify`) | Deep critical review of recent work; multi-agent grounded review of a plan file; and verification that a plan was fully and correctly implemented, plain-language summary first. |
 | `session` | `/session:good-morning`, `/session:call-it-a-day` | Resume the previous session, and capture end-of-session state so the next resumes cleanly. |
 | `repo` | `/repo:deprecate` | Fully deprecate and archive a repository. |
 | `release` | `/release:publish` | Run the full changelog → git tag → GitHub release workflow. |
@@ -197,7 +197,8 @@ claude-plugins/
 ├── .claude-plugin/marketplace.json   # the marketplace manifest
 ├── review/                           # one directory per plugin…
 │   ├── .claude-plugin/plugin.json    #   …each with its own manifest
-│   ├── commands/
+│   ├── commands/                     #   scrutinise, plan-review
+│   ├── skills/                       #   plan-verify (also answers to bare /plan-verify)
 │   └── agents/
 ├── session/
 ├── repo/
@@ -210,10 +211,12 @@ claude-plugins/
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
-manifest plus `commands/` or `skills/`, and optionally `agents/`. `explain` uses
-the `skills/` layout, so its command also answers to the bare `/explain` while no
-other command claims that name. To add a new plugin, create the directory and
-register it in `.claude-plugin/marketplace.json`.
+manifest plus `commands/` and/or `skills/`, and optionally `agents/`. An entry
+point in the `skills/` layout also answers to its bare name while no other
+command claims it: `explain` (`/explain`) and `review`'s `plan-verify` (`/plan-verify`).
+Entry points in `commands/` are reachable only by their namespaced name. To add
+a new plugin, create the directory and register it in
+`.claude-plugin/marketplace.json`.
 
 ## The `worktree` plugin
 

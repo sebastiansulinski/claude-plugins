@@ -11,7 +11,7 @@
     {
       "name": "review",
       "source": "./review",
-      "description": "Critical review — /scrutinise for deep forensic review of recent work, /plan-review for multi-agent grounded review of a plan file.",
+      "description": "Critical review — /review:scrutinise for deep forensic review of recent work, /review:plan-review for multi-agent grounded review of a plan file, /review:plan-verify to confirm a plan was fully and correctly implemented.",
       "category": "productivity"
     },
     {

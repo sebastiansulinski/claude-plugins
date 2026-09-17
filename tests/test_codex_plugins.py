@@ -12,7 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "review": {"scrutinise", "plan-review"},
+    "review": {"scrutinise", "plan-review", "plan-verify"},
     "session": {"good-morning", "call-it-a-day"},
     "repo": {"deprecate"},
     "release": {"publish"},
