@@ -87,7 +87,7 @@ class WorktreePackageTests(unittest.TestCase):
 
     def test_skills_resolve_runtime_inside_an_independent_install(self):
         installed = self.install()
-        for skill_name in ("create", "init", "list", "remove"):
+        for skill_name in ("create", "init", "list", "remove", "cleanup"):
             skill = installed / "skills" / skill_name / "SKILL.md"
             self.assertTrue(skill.is_file(), f"missing {skill_name} skill")
             links = re.findall(r"\]\(([^)]+)\)", skill.read_text())
@@ -99,6 +99,7 @@ class WorktreePackageTests(unittest.TestCase):
                 self.assertTrue(target.is_file())
                 result = self.run_command(["bash", target, "--help"])
                 self.assertIn("worktree.sh create", result.stdout)
+                self.assertIn("worktree.sh cleanup", result.stdout)
 
     def test_sync_check_and_repair_are_deterministic(self):
         fixture = self.workspace / "source"
@@ -188,6 +189,36 @@ class WorktreePackageTests(unittest.TestCase):
         self.assertIn("not created by this tool", refused.stderr)
         self.assertTrue(manual.is_dir())
         self.runtime(installed, repository, "remove", "manual", "--unmanaged", "--json")
+
+    def test_cleanup_acts_only_on_the_calling_session(self):
+        installed = self.install()
+        repository = self.repository()
+        self.environment.pop("WORKTREE_SESSION", None)
+        for variable in ("CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID", "CODEX_THREAD_ID"):
+            self.environment.pop(variable, None)
+        before = self.snapshot(repository)
+        mine = json.loads(self.runtime(installed, repository, "create", "mine", "--session", "one", "--json").stdout)
+        theirs = json.loads(self.runtime(installed, repository, "create", "theirs", "--session", "two", "--json").stdout)
+        self.assertEqual(mine["session"], "one")
+        refused = self.runtime(installed, repository, "cleanup", "--json", success=False)
+        self.assertIn("WORKTREE_SESSION", refused.stderr)
+        report = json.loads(self.runtime(installed, repository, "cleanup", "--session", "one", "--json").stdout)
+        self.assertFalse(report["applied"])
+        self.assertEqual([entry["id"] for entry in report["repositories"][0]["worktrees"]], [f"wt:{mine['path']}"])
+        self.assertEqual(report["repositories"][0]["notConsidered"], 1)
+        self.assertTrue(Path(mine["path"]).is_dir())
+        self.runtime(installed, repository, "cleanup", "--session", "one", "--apply", "--remove", f"wt:{theirs['path']}", "--json", success=False)
+        self.assertTrue(Path(theirs["path"]).is_dir())
+        applied = json.loads(self.runtime(
+            installed, repository, "cleanup", "--session", "one", "--apply", "--remove", f"wt:{mine['path']}", "--json",
+        ).stdout)
+        self.assertTrue(applied["applied"])
+        self.assertEqual(applied["repositories"][0]["worktrees"][0]["action"], "removed")
+        self.assertFalse(Path(mine["path"]).exists())
+        self.assertTrue(Path(theirs["path"]).is_dir())
+        self.run_command(["git", "show-ref", "--verify", "refs/heads/wt/theirs"], repository)
+        self.assertEqual(self.snapshot(repository), before)
+        self.runtime(installed, repository, "remove", "theirs", "--delete-branch", "--json")
 
     def test_submodule_install_preserves_both_checkouts_and_rejects_unsafe_destination(self):
         installed = self.install()

@@ -1,7 +1,7 @@
 {
   "name": "worktree",
-  "version": "1.0.0",
-  "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+  "version": "1.1.0",
+  "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions, and clean up a session's own redundant worktrees and branches afterwards.",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"
@@ -10,13 +10,14 @@
   "interface": {
     "displayName": "Worktree",
     "shortDescription": "Parallel workspaces",
-    "longDescription": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+    "longDescription": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions, and clean up a session's own redundant worktrees and branches afterwards.",
     "developerName": "Sebastian Sulinski",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": [
       "Create an isolated worktree for this task.",
-      "List this repository’s worktrees."
+      "List this repository’s worktrees.",
+      "Clean up this session’s redundant worktrees and branches."
     ]
   },
   "repository": "https://github.com/sebastiansulinski/claude-plugins",

@@ -19,7 +19,7 @@ EXPECTED = {
     "requirements": {"interrogate"},
     "db": {"query-analysis"},
     "dead-code": {"purge"},
-    "worktree": {"create", "init", "list", "remove"},
+    "worktree": {"create", "init", "list", "remove", "cleanup"},
     "explain": {"explain"},
 }
 

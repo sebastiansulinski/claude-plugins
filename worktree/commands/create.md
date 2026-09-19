@@ -19,7 +19,9 @@ The first argument is the worktree name (required — short, kebab-case, typical
    ```
 
 3. Parse the JSON result and report to the user:
-   - the worktree path and branch (and the base it was created from),
+   - the worktree path and branch (and the base it was created from), and the session it was recorded
+     under (`session` — Claude Code's session identity, which lets `/worktree:cleanup` later recognise this
+     worktree as this session's own),
    - which bootstrap steps ran, were skipped, or failed (`env`, `composer`, `npm`, `postSetup`).
 4. If the script fails, surface its error message verbatim — the messages are self-explanatory (invalid name, branch exists, destination inside the repository or superproject, unresolvable base branch). Do not improvise recovery git commands against the shared git directory; fix the input and re-run the script.
 5. If a bootstrap step failed but the worktree was created, say so plainly: the worktree is usable, the failed step can be re-run manually inside it.

@@ -53,7 +53,7 @@
     {
       "name": "worktree",
       "source": "./worktree",
-      "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions.",
+      "description": "Parallel workspaces — create isolated git worktrees (plain repositories and submodules) so multiple agents can work on different plans simultaneously without file collisions, and clean up a session's own redundant worktrees and branches afterwards.",
       "category": "workflow"
     },
     {

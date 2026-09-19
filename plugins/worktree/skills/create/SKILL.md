@@ -29,8 +29,9 @@ run inside that submodule. Read applicable repository instructions before choosi
 
    Omit `--from` when no base was requested; include only the supported options requested by the user.
    Pass arguments as shell-quoted values, never evaluate user-provided shell text.
-3. Parse JSON output and report the path, branch, base, and each bootstrap result (`env`, `composer`, `npm`,
-   `postSetup`). A nonzero exit can still include valid JSON when bootstrap failed after creation. Report
+3. Parse JSON output and report the path, branch, base, the recorded `session` (the identity the host exposes to
+   shell commands, which lets the cleanup workflow later recognise this worktree as this session's own), and
+   each bootstrap result (`env`, `composer`, `npm`, `postSetup`). A nonzero exit can still include valid JSON when bootstrap failed after creation. Report
    the created worktree and failed step plainly; it remains available for manual recovery inside it.
 4. Surface engine errors accurately. For invalid names, existing branches, unsafe destinations, or an
    unresolved base, correct the input. Do not improvise recovery operations against the shared Git directory.

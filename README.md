@@ -30,7 +30,7 @@ picker, mention its qualified name, or ask for the corresponding workflow:
 | requirements | `requirements:interrogate` |
 | db | `db:query-analysis` |
 | dead-code | `dead-code:purge` |
-| worktree | `worktree:create`, `worktree:init`, `worktree:list`, `worktree:remove` |
+| worktree | `worktree:create`, `worktree:init`, `worktree:list`, `worktree:remove`, `worktree:cleanup` |
 | explain | `explain:explain` |
 
 For example: “Use `session:good-morning` to resume this project”,
@@ -176,7 +176,7 @@ Plugin commands are namespaced `plugin:command` — each reads as a `category:ac
 | `requirements` | `/requirements:interrogate` | Exhaustive requirements interrogation — never writes code. |
 | `db` | `/db:query-analysis` | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
 | `dead-code` | `/dead-code:purge` | Find and safely remove dead code and unused dependencies — only after your approval. |
-| `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init` | Isolated git worktrees for parallel agents — works on plain repositories and submodules. |
+| `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init`, `/worktree:cleanup` (also `/cleanup`) | Isolated git worktrees for parallel agents — works on plain repositories and submodules — and session-scoped cleanup of a session's own redundant worktrees and branches. |
 | `explain` | `/explain:explain` (also `/explain`) | Plain-language explanation of the previous outcome or a named subject for a non-technical reader — what changed, what it fixes, what you will notice. Read-only. |
 
 Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
@@ -206,14 +206,15 @@ claude-plugins/
 ├── requirements/
 ├── db/
 ├── dead-code/
-├── worktree/                         # also ships scripts/ and tests/
+├── worktree/                         # commands/, skills/cleanup/, scripts/ and tests/
 └── explain/                          # single skill: skills/explain/SKILL.md
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
 manifest plus `commands/` and/or `skills/`, and optionally `agents/`. An entry
 point in the `skills/` layout also answers to its bare name while no other
-command claims it: `explain` (`/explain`) and `review`'s `plan-verify` (`/plan-verify`).
+command claims it: `explain` (`/explain`), `review`'s `plan-verify` (`/plan-verify`) and
+`worktree`'s `cleanup` (`/cleanup`).
 Entry points in `commands/` are reachable only by their namespaced name. To add
 a new plugin, create the directory and register it in
 `.claude-plugin/marketplace.json`.
@@ -237,6 +238,8 @@ worktree.sh create <name> [--from <branch>] [--dest <dir>]
 worktree.sh remove <name> [--delete-branch] [--force] [--unmanaged] [--json]
 worktree.sh list   [--json]
 worktree.sh config [--write]
+worktree.sh cleanup [--session <id>] [--no-recurse] [--json]
+worktree.sh cleanup --apply [--remove <id>]... [--session <id>] [--no-recurse] [--json]
 ```
 
 **Conventions (zero configuration):** base branch resolves local-then-remote
@@ -266,13 +269,54 @@ does not.
   merged-ness against the base recorded at create time — never against the
   main checkout's current HEAD;
 - concurrent `index.lock` contention on the shared git directory is retried
-  once — it is contention, not corruption.
+  once — it is contention, not corruption;
+- `cleanup` acts only on worktrees and branches carrying the calling session's
+  markers, removes only the identifiers it was explicitly given, re-checks each
+  from live git state at that moment, deletes a branch only at the commit it
+  verified (`git update-ref -d` with the expected tip), never prunes globally,
+  and refuses to run without a session identity.
 
 Run the tests with:
 
 ```
 bash worktree/tests/run.sh
 ```
+
+### Session-scoped cleanup (`/worktree:cleanup`, also `/cleanup`)
+
+When a session has finished its plans, `/cleanup` tidies up **that session's
+own** worktrees and branches — merged, abandoned or never used — and keeps
+what it is still working on. It never touches worktrees or branches created by
+other sessions, by hand, or the main checkout, and it covers the root
+repository and every initialised submodule beneath it.
+
+How the engine knows whose work is whose: `create` records provenance markers
+on the branch (`worktreeSession`, `worktreePath`, `worktreeCreated`,
+`worktreeStart`, beside the existing `worktreeBase`). The session identity
+comes from `--session`, then `WORKTREE_SESSION`, then what the host already
+exports to shell commands — `CLAUDE_CODE_SESSION_ID` on Claude Code,
+`CODEX_SESSION_ID` or `CODEX_THREAD_ID` on Codex — so both hosts work with
+zero configuration. A worktree is a candidate only when its branch carries the
+calling session's marker **and** its path equals the recorded path; a branch
+whose worktree is gone is an orphan candidate. Without an identity, `cleanup`
+refuses to run.
+
+The flow is report, decide, apply:
+
+```
+wt cleanup --json          # this session's candidates with facts and a safety verdict;
+                           # everything else is one "not considered" count
+wt cleanup --apply --remove "wt:/abs/path/to/worktree" --remove "br:/abs/repo:wt/name" --json
+```
+
+The skill decides which candidates are redundant from its own knowledge (the
+plan merged, the plan dropped, the worktree superseded) and passes exactly
+those identifiers. The engine removes each only if it is safe at that moment:
+clean, its branch contained in the recorded base, not locked, not the current
+directory, base still present. Anything else is left with a reason (`dirty`,
+`unmerged`, `locked`, `current-directory`, `base-missing`,
+`checked-out-elsewhere`, `tip-moved`, `lock-contention`, `not-requested`);
+`/worktree:remove` with its explicit flags remains the tool for those.
 
 ### Worked example — two agents on two plans, in parallel
 
