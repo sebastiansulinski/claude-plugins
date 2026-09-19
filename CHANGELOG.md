@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-19
+
+### Added
+
+- **`worktree:cleanup`** — a fifth entry point on the worktree plugin that tidies up the
+  calling session's own worktrees and branches (merged, abandoned or never used) across
+  the repository and every initialised submodule, while keeping what the session is
+  still working on. The engine now records provenance markers at creation time (session,
+  path, creation time, start commit) stored beside the existing base marker, derived from
+  whatever identity the host exposes to shell commands (`--session`, `WORKTREE_SESSION`,
+  `CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`, `CODEX_THREAD_ID`) — so both hosts work
+  with zero configuration. `cleanup` reports only this session's candidates with
+  supporting facts and a safety verdict; with `--apply` it removes exactly the
+  identifiers it is given, each re-checked against live git state immediately before
+  removal (clean, contained in the recorded base, not locked, not the current directory,
+  base still present), deletes branches at the verified tip using `git update-ref -d`,
+  never prunes globally, and refuses to run at all without a session identity — so it can
+  never touch another session's work. Claude Code: `/worktree:cleanup`, also aliased
+  `/cleanup`; user-invocable only (not for the agent to run on its own initiative).
+  Codex: `worktree:cleanup`. Covered by harness test cases (337 assertions), a package
+  test run against an installed copy of the plugin, acceptance scenarios, and an
+  execution record kept in `tests/acceptance/cleanup.md`.
+
+### Changed
+
+- Worktree plugin manifests bumped to `1.1.0` on both hosts; `create` now accepts
+  `--session` and reports the recorded session; `list --json` gains `session`,
+  `recordedPath` and `createdAt` fields; `remove --delete-branch` now clears all
+  provenance markers; a shared retry mechanism now covers lock contention for creation,
+  removal and branch deletion (previously creation only).
+
 ## [1.4.0] - 2026-09-17
 
 ### Added
