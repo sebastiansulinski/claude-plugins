@@ -1,4 +1,5 @@
 ---
+name: list
 description: List git worktrees for the current repository with branch, dirty state, and merge status.
 ---
 

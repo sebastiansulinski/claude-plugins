@@ -166,18 +166,21 @@ This registers under the marketplace name **`sebastiansulinski`** (set in
 ## Claude Code commands
 
 Plugin commands are namespaced `plugin:command` — each reads as a `category:action` phrase.
+Every command also answers to its bare name (`/scrutinise`, `/list`, `/explain`) while no other
+command claims that name. The one exception today is `/worktree:init`: Claude Code's built-in `/init`
+keeps the bare name, so worktree's init is reachable only by its full name.
 
 | Plugin | Commands | What it does |
 |--------|----------|--------------|
-| `review` | `/review:scrutinise`, `/review:plan-review`, `/review:plan-verify` (also `/plan-verify`) | Deep critical review of recent work; multi-agent grounded review of a plan file; and verification that a plan was fully and correctly implemented, plain-language summary first. |
+| `review` | `/review:scrutinise`, `/review:plan-review`, `/review:plan-verify` | Deep critical review of recent work; multi-agent grounded review of a plan file; and verification that a plan was fully and correctly implemented, plain-language summary first. |
 | `session` | `/session:good-morning`, `/session:call-it-a-day` | Resume the previous session, and capture end-of-session state so the next resumes cleanly. |
 | `repo` | `/repo:deprecate` | Fully deprecate and archive a repository. |
 | `release` | `/release:publish` | Run the full changelog → git tag → GitHub release workflow. |
 | `requirements` | `/requirements:interrogate` | Exhaustive requirements interrogation — never writes code. |
 | `db` | `/db:query-analysis` | Read-only audit of Eloquent / query-builder usage; writes findings to `docs/analysis/`. |
 | `dead-code` | `/dead-code:purge` | Find and safely remove dead code and unused dependencies — only after your approval. |
-| `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init`, `/worktree:cleanup` (also `/cleanup`) | Isolated git worktrees for parallel agents — works on plain repositories and submodules — and session-scoped cleanup of a session's own redundant worktrees and branches. |
-| `explain` | `/explain:explain` (also `/explain`) | Plain-language explanation of the previous outcome or a named subject for a non-technical reader — what changed, what it fixes, what you will notice. Read-only. |
+| `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init`, `/worktree:cleanup` | Isolated git worktrees for parallel agents — works on plain repositories and submodules — and session-scoped cleanup of a session's own redundant worktrees and branches. |
+| `explain` | `/explain:explain` | Plain-language explanation of the previous outcome or a named subject for a non-technical reader — what changed, what it fixes, what you will notice. Read-only. |
 
 Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
 (`manager`), and `dead-code` (`purger`). Each is spawned by its plugin's
@@ -197,8 +200,8 @@ claude-plugins/
 ├── .claude-plugin/marketplace.json   # the marketplace manifest
 ├── review/                           # one directory per plugin…
 │   ├── .claude-plugin/plugin.json    #   …each with its own manifest
-│   ├── commands/                     #   scrutinise, plan-review
-│   ├── skills/                       #   plan-verify (also answers to bare /plan-verify)
+│   ├── skills/                       #   one folder per command: scrutinise/, plan-review/,
+│   │                                 #   plan-verify/, each holding a SKILL.md
 │   └── agents/
 ├── session/
 ├── repo/
@@ -206,17 +209,15 @@ claude-plugins/
 ├── requirements/
 ├── db/
 ├── dead-code/
-├── worktree/                         # commands/, skills/cleanup/, scripts/ and tests/
-└── explain/                          # single skill: skills/explain/SKILL.md
+├── worktree/                         # also ships scripts/ and tests/
+└── explain/
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
-manifest plus `commands/` and/or `skills/`, and optionally `agents/`. An entry
-point in the `skills/` layout also answers to its bare name while no other
-command claims it: `explain` (`/explain`), `review`'s `plan-verify` (`/plan-verify`) and
-`worktree`'s `cleanup` (`/cleanup`).
-Entry points in `commands/` are reachable only by their namespaced name. To add
-a new plugin, create the directory and register it in
+manifest, a `skills/` directory holding one `<command>/SKILL.md` per command
+(its `name` frontmatter matches the folder), and optionally `agents/`. The
+contract tests require this layout: no plugin ships a `commands/` directory.
+To add a new plugin, create the directory and register it in
 `.claude-plugin/marketplace.json`.
 
 ## The `worktree` plugin

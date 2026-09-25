@@ -1,4 +1,5 @@
 ---
+name: remove
 description: Remove a worktree created by /worktree:create, optionally deleting its branch when merged.
 argument-hint: <name>
 ---

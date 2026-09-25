@@ -61,6 +61,13 @@ class CodexPackagesTest(unittest.TestCase):
                     self.assertNotIn("$ARGUMENTS", contents)
                     self.assertNotIn("~/.claude/", contents)
 
+    def test_claude_packages_use_the_skills_layout_only(self):
+        for plugin, expected in EXPECTED.items():
+            with self.subTest(plugin=plugin):
+                self.assertFalse((ROOT / plugin / "commands").exists(), f"{plugin} still has a commands/ directory")
+                skills = {path.parent.name for path in (ROOT / plugin / "skills").glob("*/SKILL.md")}
+                self.assertEqual(skills, expected)
+
     def test_manifest_identity_and_resources_are_self_contained(self):
         for plugin in EXPECTED:
             with self.subTest(plugin=plugin):

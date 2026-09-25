@@ -1,4 +1,5 @@
 ---
+name: good-morning
 description: Resume work from the previous session — load memory, lessons, config, and the project's prompt, then propose next steps.
 ---
 

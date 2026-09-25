@@ -1,6 +1,7 @@
 ---
+name: purge
 description: Find and safely remove dead code and unused dependencies — verified, and only after your approval.
-argument-hint: [optional scope, e.g. "the auth module", "composer dependencies"]
+argument-hint: [optional scope, for example "the auth module", "composer dependencies"]
 ---
 
 Spawn the `purger` agent (via the Task tool) to find and remove dead code.

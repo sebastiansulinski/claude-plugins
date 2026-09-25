@@ -1,4 +1,5 @@
 ---
+name: interrogate
 description: Exhaustively interrogate project requirements through questioning — never writes code.
 argument-hint: [optional context]
 ---

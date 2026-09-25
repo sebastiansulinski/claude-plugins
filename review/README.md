@@ -1,10 +1,11 @@
 # review
 
-A plugin with three critical-review entry points, shipped for Claude Code and Codex:
+A plugin with three critical-review entry points, shipped for Claude Code and Codex. On Claude Code each
+also answers to its bare name: `/scrutinise`, `/plan-review`, `/plan-verify`.
 
 - **`/review:scrutinise`** — deep, evidence-based critical review of recent work: bugs, design flaws, anti-patterns, missing tests, edge cases, security holes, inconsistencies. No skimming, no auto-fixing.
 - **`/review:plan-review`** — multi-agent grounded review of a plan file, run entirely locally so it can verify every claim against the actual codebase.
-- **`/review:plan-verify`** (also `/plan-verify`) — verification that a plan has been fully and correctly implemented: three independent reviewers, one deep synthesis, a plain-language summary first.
+- **`/review:plan-verify`** — verification that a plan has been fully and correctly implemented: three independent reviewers, one deep synthesis, a plain-language summary first.
 
 Part of the [claude-plugins marketplace](../README.md). Codex users get the same three workflows as `review:scrutinise`, `review:plan-review` and `review:plan-verify`; see the root README for installation.
 
@@ -59,9 +60,9 @@ All three entry points rely on the bundled `scrutiniser` subagent. It can also b
 ```
 review/
 ├── .claude-plugin/plugin.json   # plugin manifest
-├── commands/scrutinise.md       # /review:scrutinise
-├── commands/plan-review.md      # /review:plan-review
-├── skills/plan-verify/SKILL.md       # /review:plan-verify, also /plan-verify
+├── skills/scrutinise/SKILL.md   # /review:scrutinise, also /scrutinise
+├── skills/plan-review/SKILL.md  # /review:plan-review, also /plan-review
+├── skills/plan-verify/SKILL.md  # /review:plan-verify, also /plan-verify
 ├── agents/scrutiniser.md        # the deep-review subagent (shared by all three)
 └── README.md
 ```

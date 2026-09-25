@@ -1,6 +1,7 @@
 ---
+name: publish
 description: Publish a release — update the changelog, create the git tag, and publish the GitHub release.
-argument-hint: [optional version, e.g. "1.2.0"]
+argument-hint: [optional version, for example "1.2.0"]
 ---
 
 Spawn the `manager` agent (via the Task tool) to run the full release workflow.

@@ -1,4 +1,5 @@
 ---
+name: plan-review
 description: Multi-agent grounded review of a plan file — scrutiniser + architect + fact-verifier, synthesised with an ultrathink pass.
 argument-hint: <path to plan file>
 ---

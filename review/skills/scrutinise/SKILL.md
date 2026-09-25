@@ -1,4 +1,5 @@
 ---
+name: scrutinise
 description: Run a deep critical review of recent work — bugs, design, anti-patterns, missing tests, edge cases. No skimming.
 argument-hint: [optional scope, for example "today's commits", "the auth module", "the work in this session"]
 ---

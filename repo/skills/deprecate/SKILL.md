@@ -1,4 +1,5 @@
 ---
+name: deprecate
 description: Fully deprecate and archive a repository.
 argument-hint: [path to repo]
 ---

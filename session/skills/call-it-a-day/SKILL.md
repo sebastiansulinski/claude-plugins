@@ -1,4 +1,5 @@
 ---
+name: call-it-a-day
 description: End-of-session capture — record state so the next session resumes with no context loss.
 ---
 

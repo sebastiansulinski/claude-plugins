@@ -1,4 +1,5 @@
 ---
+name: init
 description: Write per-project worktree configuration (.worktree.json) through guided questions.
 ---
 

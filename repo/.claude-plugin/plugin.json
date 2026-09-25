@@ -1,7 +1,7 @@
 {
   "name": "repo",
   "description": "Repository lifecycle — fully deprecate and archive a repository.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"

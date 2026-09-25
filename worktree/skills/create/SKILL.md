@@ -1,4 +1,5 @@
 ---
+name: create
 description: Create an isolated git worktree for parallel work — works on plain repositories and submodules.
 argument-hint: <name> [base-branch]
 ---
