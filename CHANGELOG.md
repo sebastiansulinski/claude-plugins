@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-09-25
+
+### Fixed
+
+- **`explain` no longer invents small facts.** When run through the real Claude Code plugin, the
+  1.6.0 skill occasionally stated things its source did not say — for example what a refused person
+  sees on screen, a reason for a rename, or a currency — paraphrased old code names instead of
+  quoting them, and placed remarks about the source before its summary. Both skills (Claude Code and
+  Codex carry identical writing rules) now require every factual statement to be something the source
+  actually states, call out the kinds of guesses that slip in most often, and move anything unsettled
+  to a "what is still open" section. They now show an unfaithful example beside a correct one, forbid
+  quoting or paraphrasing code names, require that any name given to a person in an example appear
+  nowhere in the source, put the summary first and remarks about the source last, forbid anything
+  appearing after a length-limited explanation, and require re-reading fact by fact against the
+  source before finishing. The explain plugin is now version `1.1.1` on both hosts.
+- The acceptance record now also includes runs of the released 1.6.0 skill through the installed
+  plugin and of the corrected skill, with full outputs recorded in
+  `tests/acceptance/explain-outputs-2026-09-25.md`.
+
 ## [1.6.0] - 2026-09-25
 
 ### Changed
