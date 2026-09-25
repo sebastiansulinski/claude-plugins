@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-09-25
+
+### Added
+
+- Every command now also answers to its bare name while no other command claims it:
+  `/scrutinise`, `/plan-review`, `/good-morning`, `/call-it-a-day`, `/deprecate`,
+  `/publish`, `/interrogate`, `/query-analysis`, `/purge`, `/create`, `/list`, and
+  `/remove`, alongside the existing `/plan-verify`, `/cleanup`, and `/explain`. Claude
+  Code's built-in `/init` keeps its bare name, so the worktree plugin's init command
+  stays reachable only as `/worktree:init`.
+
+### Changed
+
+- **Every Claude Code command moved from `commands/*.md` to `skills/<name>/SKILL.md`**,
+  so all nine Claude packages now share one layout. Command text is unchanged apart from
+  a name line added to the frontmatter and two argument hints (on the dead-code and
+  release plugins) that now say "for example" instead of the abbreviation "e.g."
+- A contract test now requires the skills layout: no Claude package may ship a
+  `commands` directory. Claude manifests were bumped so installations pick up the move:
+  review and worktree to `1.2.0`; session, repo, release, requirements, db, and
+  dead-code to `1.1.0`. Codex packages are unchanged.
+
 ## [1.6.1] - 2026-09-25
 
 ### Fixed
