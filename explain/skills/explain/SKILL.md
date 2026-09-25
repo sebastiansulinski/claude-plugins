@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explain the previous outcome, or a named subject, in plain language for a non-technical reader — what changed, what it fixes, and what they will notice, with concrete examples. Not for technical explanations to a developer. Read-only — never edits, re-runs or reviews.
+description: Explain the previous outcome, or a named subject, in plain words a non-technical reader can follow — what changed, why, and what they will notice — with real-life example scenes, and any unfamiliar word explained right where it appears. Not for technical explanations to a developer. Read-only — never edits, re-runs or reviews.
 argument-hint: [what to explain, and optionally for whom or how briefly — defaults to the previous outcome]
 disable-model-invocation: true
 ---
@@ -59,64 +59,172 @@ conversation. If parts were summarised from statistics rather than read, say so 
 Where the artefact and the conversation disagree, the artefact wins, and the disagreement is named.
 Where something cannot be verified, say so rather than guessing.
 
-## Audience rules
+## Who you are writing for
 
-- Plain words. Every technical term is either replaced with an everyday word or defined in a short
-  phrase the first time it appears. No acronyms or initialisms — write the words out.
-- Concrete over abstract. Every change gets a worked example in everyday terms: "Before, if a
-  customer did X, the system did Y. Now it does Z."
+Before writing, decide who the reader is: the person the user named ("for my accountant", "for the
+client"), or by default someone who uses software every day but does not build it — a customer, a business
+partner, a colleague in finance. Every rule below is judged against that person.
+
+## Writing rules
+
+- **The friend test.** Use only words your reader would use, unprompted, talking to a friend. Any other
+  word is either replaced with an everyday one, or explained right where it first appears — in brackets,
+  or as a short clause woven into the sentence, whichever reads more naturally. Replace where you can.
+  Keep the real word only when the reader will meet it again elsewhere (a product name, the name of a file
+  they will be sent), and then explain it in place the first time it appears. Watch for everyday words used
+  in their technical sense — request, call, run, build, job, check — they look plain and are not: "the page
+  request" means nothing to your reader; "while the page was loading" does.
+- **No glossary, ever.** No "words used" section and no list of terms, at the end or anywhere else. A word
+  that needs explaining is explained where it stands, or not used at all.
+- **The words that leak most often**, with what to say instead. Use the replacement; if the reader truly
+  needs the real word, explain it in place.
+
+  | Word that leaks | Say instead, or explain in place |
+  | --- | --- |
+  | repository | the project's files, the code |
+  | branch | a separate copy of the work in progress |
+  | commit | a saved change |
+  | merge | fold the work into the main version |
+  | worktree | a separate working folder |
+  | deploy | put live, release to customers |
+  | endpoint | an address the app answers at |
+  | schema | the layout of the stored information |
+  | migration | a change to how information is stored |
+  | cache | a stored copy kept for speed |
+  | token | a secret key, a one-time pass |
+  | environment | the setup it runs in (the test copy, the live one) |
+  | dependency | outside software it relies on |
+  | refactor | tidying the code without changing what it does |
+  | background job | work the system does on its own, afterwards |
+  | session | one sign-in, one conversation |
+  | instance | one running copy |
+  | validate | check |
+  | configuration | settings |
+
+- **Nothing to type or open.** No code, file paths, file names, commands, flags, function or class names,
+  or other identifiers in the body. At most one short quoted fragment, and only when the fragment itself is
+  the subject: an error message, or a label a person sees on screen.
+- No acronyms or initialisms — write the words out.
+- **Examples are scenes.** A scene has a person doing a particular thing, at a particular moment, with a
+  particular outcome: "Sam asks for a reset link at 9am and never opens it", not "a user requests a
+  token". No placeholders: no X, Y and Z, no "a user", no "the system does". A first name is fine as colour;
+  a real colleague's name never is. Use roles the artefact supports ("a workspace owner", "a customer with
+  three years of invoices").
+- **Examples are faithful.** A scene illustrates the real change and nothing more. Never invent or alter
+  who can do what, what a role means, permissions, timing, amounts, or how certain something is. Where the
+  artefact does not say, the scene uses only what it does say. An explanation in brackets explains the
+  word; it never adds facts about the system.
 - Analogies only when they make the mechanism clearer and do not mislead about how it really works.
-- No code in the body. At most one short quoted fragment, and only when the fragment itself is the
-  subject (an error message, a label a person sees on screen).
 - Numbers only when they change the reader's understanding.
 - Nothing confidential travels. Do not carry secrets, credentials, internal addresses, personal data
   or colleagues' names from the artefact into the explanation; describe the effect, not the
   identifier.
-- Honest about scale. A pure refactor is "nothing changes for anyone using it; this makes the code
-  safer to change later". Do not inflate impact.
+- Honest about scale. A pure tidy-up is "nothing changes for anyone using it; this makes it safer to
+  change later". Do not inflate impact.
 - Honest about uncertainty. Flag anything the artefact does not settle.
 
 ## Output shape
 
-Pick the shape by the subject. If it is a change to something — code, a plan, a configuration — use
-the **change shape**. Otherwise (an error, a test run, a report that led to no change, a concept)
-use the **situation shape**. Name the choice in the assumption line if it is not obvious.
+Pick the shape by the subject. If it is a change to something — code, a plan, settings — use the
+**change shape**. Otherwise (an error, a test run, a report that led to no change, a concept) use the
+**situation shape**. Name the choice in the assumption line if it is not obvious.
 
 An optional one-line assumption statement may precede section 1 when the subject was ambiguous.
 
 **Change shape**
 
-1. **In one sentence** — what was done and why.
-2. **What changed** — one short block per change, ordered so the story is easiest to follow (not
-   the order of the diff). Each block has three parts:
-   - *What it was, what it is now* — the change itself, in plain words.
-   - *What it fixes* — the problem, with an example of it going wrong before.
-   - *What you will notice* — how the system behaves differently, or how people interact with it
-     differently, from now on. If nothing visible changes, say so.
-3. **What did not change, and caveats** — what stays the same, what is still open or unverified,
-   anything the reader might wrongly assume.
-4. **Words used** — only the technical terms that could not be avoided, each with a one-line
-   meaning. Omit if there are none.
+1. **In one sentence** — what was done and why it matters to the reader.
+2. **What changed** — one block per change, ordered so the story is easiest to follow (not the order of
+   the files). Each block:
+   - a short heading in plain words that says what is different ("Only owners can export now", not
+     "Export permissions tightened");
+   - **Before and now** — what it was, what it is now, and the problem that made it worth changing;
+   - then exactly one of these, never neither:
+     - **For example:** a faithful scene — whenever a person could notice the change, or could have been
+       caught by the problem it fixes. Show it going wrong before and not now.
+     - **Nobody will notice anything:** one plain line saying so, and why it was still worth doing —
+       only when nothing anyone sees, does or receives is different. Never invent a scene for it.
+   - **What you will notice** — how things behave, or how people will do things, from now on. Leave it out
+     after "Nobody will notice anything".
+3. **What did not change, and what is still open** — what stays the same, what is unsettled or
+   unverified, anything the reader might wrongly assume.
 
 **Situation shape**
 
 1. **In one sentence** — what happened, or what this is.
-2. **What is going on** — what happened or what it is, in plain words.
-3. **Why it happens, or why it matters** — the cause or the significance, with an everyday example.
-4. **What it means for you** — the effect on the reader, or on the people using the system.
+2. **What is going on** — in plain words.
+3. **For example:** a faithful scene showing it happening to someone, or how it would.
+4. **What it means for you** — the effect on the reader, or on the people who use the system.
 5. **What happens next** — what is being done, or what remains open.
-6. **Words used** — as above; omit if none.
 
-Never emit more than five change blocks. When the subject has more than about five distinct
-changes, group them into at most five themes, explain the themes, and list the remaining changes one
-line each under "what did not change, and caveats".
+Never emit more than five change blocks. When the subject has more than about five distinct changes,
+group them into at most five themes, explain the themes, and list the rest one line each under "what did
+not change, and what is still open".
 
-Default length: roughly 300–500 words, each change block under about 100 words. Scale down for a
-small subject; scale up only when the subject genuinely has many parts. An explicit length or
-audience modifier from the user overrides this structure and this default length: keep the first
-sentence and the most important changes, drop sections rather than truncating mid-thought, and say
+Default length: roughly 400 to 700 words, each change block up to about 150 words. Scale down for a small
+subject. **The example is never the part you cut.** An explicit length or audience limit from the user
+overrides this structure and length: keep the first sentence and the most important change or point with
+its example (shrunk to one sentence if it must be), drop whole sections or whole changes instead, and say
 in one clause what you left out. The reader is busy: the first sentence must already answer "what
 happened, and why should I care".
+
+## What good looks like
+
+The source, as an engineer wrote it:
+
+> Security fix after review: password reset tokens were valid for 24 hours, so anyone with access to a
+> user's mailbox during that window could take over the account. Tokens now expire after 30 minutes, and
+> issuing a new token revokes all earlier ones; a revoked or expired token renders the existing "link
+> expired" page with a button to request a new link. ResetPasswordController renamed to
+> PasswordResetController, no behaviour change.
+
+Too technical — do not write like this:
+
+> The reset token lifetime was reduced from 24 hours to 30 minutes and new requests now invalidate prior
+> tokens. The controller was renamed.
+
+Written for the reader:
+
+> **In one sentence:** password reset links now stop working after half an hour, and only the newest one
+> works, so an old email left in someone's inbox can no longer be used to get into their account.
+>
+> **Reset links now last half an hour, not a whole day**
+> Before and now: a reset link used to keep working for 24 hours, which meant anyone who got into your
+> email inbox during that time could use it to take over your account. Now it stops working after 30
+> minutes.
+> For example: Sam asks for a reset link at 9am, gets pulled into a meeting and never opens it. Before,
+> anyone who got into Sam's inbox until 9am the next day could have used that link to get into Sam's
+> account. Now the link is useless by half past nine.
+> What you will notice: if you wait too long, the link opens the "link expired" page, with a button to ask
+> for a new one.
+>
+> **Only the newest link works**
+> Before and now: asking for a second link used to leave the first one working too. Now each new request
+> switches off every earlier link.
+> For example: Sam's first email is slow to arrive, so Sam asks again. Both emails turn up. Before, either
+> link would have worked. Now the first one opens the "link expired" page and only the second one works.
+> What you will notice: always use the most recent email.
+>
+> **A part of the code was renamed**
+> Nobody will notice anything: one internal piece was given a clearer name so it is easier to find later.
+> Resetting a password looks and works exactly as before.
+
+Notice what the good version does: every word is one Sam would use; the half-hour and the whole day are
+the numbers that matter, so they stay; each scene has a person, a moment and an outcome; nothing is added
+that the source did not say; the rename gets one line, not an invented story; there is no list of terms.
+
+## Before you send
+
+Read your draft back as the reader you named, and fix it before sending:
+
+1. Mark every word they would not use talking to a friend. Replace it, or explain it right there in
+   brackets or a short clause.
+2. Check there is no list of terms anywhere.
+3. Check every change block has either a scene with a person in it or a "Nobody will notice anything"
+   line — never neither, and no scene invented for a change nobody can see.
+4. Check every scene against the artefact: the same people and roles, the same permissions, the same
+   timing and amounts, the same certainty.
+5. Check that no file path, command, flag, function or class name appears.
 
 ## Rules
 
