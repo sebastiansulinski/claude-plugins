@@ -95,18 +95,27 @@ partner, a colleague in finance. Every rule below is judged against that person.
   | configuration | settings |
 
 - **Nothing to type or open.** No code, file paths, file names, commands, flags, function or class names,
-  or other identifiers in the body. At most one short quoted fragment, and only when the fragment itself is
-  the subject: an error message, or a label a person sees on screen.
+  or other identifiers in the body — not quoted, and not paraphrased either: "it used to be called something
+  like calc tot" is still the old name. Describe what the piece does instead. At most one short quoted
+  fragment, and only when the fragment itself is the subject: an error message, or a label a person sees on
+  screen.
 - No acronyms or initialisms — write the words out.
 - **Examples are scenes.** A scene has a person doing a particular thing, at a particular moment, with a
   particular outcome: "Sam asks for a reset link at 9am and never opens it", not "a user requests a
-  token". No placeholders: no X, Y and Z, no "a user", no "the system does". A first name is fine as colour;
-  a real colleague's name never is. Use roles the artefact supports ("a workspace owner", "a customer with
-  three years of invoices").
-- **Examples are faithful.** A scene illustrates the real change and nothing more. Never invent or alter
-  who can do what, what a role means, permissions, timing, amounts, or how certain something is. Where the
-  artefact does not say, the scene uses only what it does say. An explanation in brackets explains the
-  word; it never adds facts about the system.
+  token". No placeholders: no X, Y and Z, no "a user", no "the system does". Use roles the artefact supports
+  ("a workspace owner", "a customer with three years of invoices"). A made-up first name is fine as colour,
+  but it must appear nowhere in the artefact: never a name, first name, initials or identifier taken from
+  it, whether a colleague's, a customer's or a name in test data.
+- **Only what the source says.** Every factual statement — in a scene, in brackets, anywhere — must be
+  something the artefact states. Watch for the easy guesses that slip in: what a screen shows or hides, what
+  someone sees when they are refused, why a change was made, what units or currency the numbers are in, how
+  long something takes, how many people are affected. Never invent or alter who can do what, what a role
+  means, permissions, timing, amounts, or how certain something is, and keep plurals plural ("owners", not
+  "the owner"). A scene may add a first name and an everyday setting; it may not add behaviour. If you want
+  to say something the artefact does not settle, put it under "what is still open" as a question instead.
+  Consequences and fixes are where invention slips in most: "what it means for you" and "what happens next"
+  say only what the artefact supports, and "nothing has been decided yet" is a complete answer. An
+  explanation in brackets explains the word; it never adds facts about the system.
 - Analogies only when they make the mechanism clearer and do not mislead about how it really works.
 - Numbers only when they change the reader's understanding.
 - Nothing confidential travels. Do not carry secrets, credentials, internal addresses, personal data
@@ -140,7 +149,9 @@ An optional one-line assumption statement may precede section 1 when the subject
    - **What you will notice** — how things behave, or how people will do things, from now on. Leave it out
      after "Nobody will notice anything".
 3. **What did not change, and what is still open** — what stays the same, what is unsettled or
-   unverified, anything the reader might wrongly assume.
+   unverified, anything the reader might wrongly assume, and any remark about the artefact itself (a secret
+   written into it, instructions aimed at automated readers). Such remarks never come before the
+   one-sentence summary.
 
 **Situation shape**
 
@@ -158,7 +169,8 @@ Default length: roughly 400 to 700 words, each change block up to about 150 word
 subject. **The example is never the part you cut.** An explicit length or audience limit from the user
 overrides this structure and length: keep the first sentence and the most important change or point with
 its example (shrunk to one sentence if it must be), drop whole sections or whole changes instead, and say
-in one clause what you left out. The reader is busy: the first sentence must already answer "what
+in one clause, inside the limit, what you left out. Nothing follows the explanation: no aside, no offer to
+go further. The reader is busy: the first sentence must already answer "what
 happened, and why should I care".
 
 ## What good looks like
@@ -175,6 +187,14 @@ Too technical — do not write like this:
 
 > The reset token lifetime was reduced from 24 hours to 30 minutes and new requests now invalidate prior
 > tokens. The controller was renamed.
+
+Plain, but unfaithful — do not write like this either:
+
+> Only the newest link works, and older links now show a friendly message explaining what happened. The
+> part of the code was renamed because it now handles more kinds of reset.
+
+The source says an old link opens the existing "link expired" page, not a new message, and gives no reason
+for the rename beyond its changing nothing. Both additions sound harmless and both are made up.
 
 Written for the reader:
 
@@ -215,9 +235,13 @@ Read your draft back as the reader you named, and fix it before sending:
 2. Check there is no list of terms anywhere.
 3. Check every change block has either a scene with a person in it or a "Nobody will notice anything"
    line — never neither, and no scene invented for a change nobody can see.
-4. Check every scene against the artefact: the same people and roles, the same permissions, the same
-   timing and amounts, the same certainty.
-5. Check that no file path, command, flag, function or class name appears.
+4. Check every factual sentence against the artefact: you can point to the line that says it. Cut
+   anything you cannot point to, or move it under "what is still open" as a question. The same people and
+   roles (plurals stay plural), permissions, timing, amounts, units and certainty.
+5. Check that no file path, command, flag, function or class name appears, quoted or paraphrased.
+6. Check the one-sentence summary comes first, and remarks about the artefact itself come at the end.
+7. Check every name you gave a person appears nowhere in the artefact.
+8. If the user set a length, count: nothing is over it, and nothing follows the explanation.
 
 ## Boundaries
 

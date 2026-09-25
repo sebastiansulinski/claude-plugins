@@ -1,7 +1,7 @@
 {
   "name": "explain",
   "description": "Plain-language explanations — turn the previous outcome or a named subject into an explanation a non-technical reader can follow: what changed, what it fixes, and what they will notice. Read-only.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"
