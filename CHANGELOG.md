@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-25
+
+### Changed
+
+- **`explain` now writes for its reader instead of at them.** Both skills (Claude Code and Codex,
+  identical writing rules) start by naming who the explanation is for, then judge every sentence
+  against that person. The closing list of terms is gone entirely — an unclear word must now be
+  replaced with an everyday one, or explained right where it stands, in brackets or a short clause,
+  never deferred to a glossary. The rules also name the words that leak into explanations most often,
+  with plain replacements, including everyday words that quietly carry a technical meaning ("request",
+  "call", "run", "build", "job", "check"). File paths, commands, and other identifiers stay out of the
+  explanation. Every change a person could actually notice must now carry a worked scene — a named
+  person, a moment, an outcome — and that scene may add nothing the source artefact does not say; a
+  change nobody would notice must say so plainly rather than being given an invented scene. The rules
+  now show one complete worked example end to end, and close with a re-read pass that checks a draft
+  against each of these rules before it is sent. Length limits no longer come at the example's expense.
+  The explain plugin moves to `1.1.0` on both hosts. Acceptance checks were tightened first, and
+  baseline and revised outputs from the same three fixtures are kept in
+  `tests/acceptance/explain-outputs-2026-09-25.md`.
+
 ## [1.5.0] - 2026-09-19
 
 ### Added
