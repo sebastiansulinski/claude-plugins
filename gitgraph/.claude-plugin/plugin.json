@@ -1,0 +1,10 @@
+{
+  "name": "gitgraph",
+  "description": "Git history as a page — /gitgraph opens the whole commit graph of the repository or a submodule in your browser: refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy and add-to-prompt. -i opens it in the Claude desktop app's built-in browser.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "types": "./types/index.d.ts"
+}

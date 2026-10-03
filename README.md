@@ -1,7 +1,8 @@
 # claude-plugins
 
 Sebastian Sulinski's personal plugins for Claude Code and Codex — the same
-workflows packaged natively for each host, in one repository.
+workflows packaged natively for each host, in one repository. One plugin,
+[`gitgraph`](#the-gitgraph-plugin), is Claude Code only for now.
 
 ## Codex
 
@@ -161,6 +162,7 @@ This registers under the marketplace name **`sebastiansulinski`** (set in
 /plugin install dead-code@sebastiansulinski
 /plugin install worktree@sebastiansulinski
 /plugin install explain@sebastiansulinski
+/plugin install gitgraph@sebastiansulinski
 ```
 
 ## Claude Code commands
@@ -181,6 +183,7 @@ keeps the bare name, so worktree's init is reachable only by its full name.
 | `dead-code` | `/dead-code:purge` | Find and safely remove dead code and unused dependencies — only after your approval. |
 | `worktree` | `/worktree:create`, `/worktree:remove`, `/worktree:list`, `/worktree:init`, `/worktree:cleanup` | Isolated git worktrees for parallel agents — works on plain repositories and submodules — and session-scoped cleanup of a session's own redundant worktrees and branches. |
 | `explain` | `/explain:explain` | Plain-language explanation of the previous outcome or a named subject for a non-technical reader — what changed, what it fixes, what you will notice. Read-only. |
+| `gitgraph` | `/gitgraph` | The whole commit history of the repository or a submodule as a browsable page: graph, refs tree, find by commit or by changed file, commit details with per-hunk diffs. See [The `gitgraph` plugin](#the-gitgraph-plugin). |
 
 Three plugins also ship a subagent — `review` (`scrutiniser`), `release`
 (`manager`), and `dead-code` (`purger`). Each is spawned by its plugin's
@@ -210,15 +213,56 @@ claude-plugins/
 ├── db/
 ├── dead-code/
 ├── worktree/                         # also ships scripts/ and tests/
-└── explain/
+├── explain/
+└── gitgraph/                         # a function-hooks plugin: hooks/ and types/, no skills/
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
 manifest, a `skills/` directory holding one `<command>/SKILL.md` per command
 (its `name` frontmatter matches the folder), and optionally `agents/`. The
 contract tests require this layout: no plugin ships a `commands/` directory.
+The exception is `gitgraph`, which ships code instead of instructions: a
+`hooks/hooks.json` naming the TypeScript module Claude Code's plugin engine runs.
 To add a new plugin, create the directory and register it in
 `.claude-plugin/marketplace.json`.
+
+## The `gitgraph` plugin
+
+`/gitgraph` opens the whole history of the current repository as a page in your browser. It is
+written for Claude Code's plugin engine, so there is no Codex version yet.
+
+```
+/gitgraph                  # the repository you are in, in your default browser
+/gitgraph flow             # a submodule, by name, path, or last path segment
+/gitgraph -i               # the Claude desktop app's built-in browser (--internal)
+```
+
+- **History:** every commit on every branch, remote, and tag, newest first, in one scroll, with
+  each line of development in its own colour.
+- **Sidebar:** branches, remotes, and tags as folder trees. Click one to jump to its latest commit
+  and dim everything outside its history; right-click to copy its full name or add it to the prompt.
+- **Find:** Commits mode lists the commits whose subject, author, hash, or refs contain the text.
+  Files mode lists the commits that changed a file whose path contains it.
+- **Details:** click a commit, or move with the arrow keys, for its full message, author and
+  committer with email addresses, dates, refs, and change counts. The Changes tab shows each
+  changed file and its diff, one card per changed section.
+- **Copying:** click a hash to copy it. Copy the message as text, or as Markdown that pastes into
+  Slack as a code block. Right-click a commit or a ref to copy, or to add it to Claude Code's
+  prompt box. Nothing is ever sent.
+
+Dark mode is the default; the button at the top right switches to light. Panel sizes and the
+theme are remembered per browser.
+
+**How it runs.** `/gitgraph` writes the page to `~/.claude/gitgraph/` and serves it from a small
+Python helper on `127.0.0.1:47321`. The helper reads diffs and file matches with `git` on demand,
+and passes "add to prompt" requests to the session that opened the page. Each page carries a
+one-off code, so only that session receives them. The helper stops after 30 idle minutes, and the
+next `/gitgraph` starts it again. Without Python 3 the page still opens from disk, without the
+Changes tab, file search, or add-to-prompt.
+
+**`-i` costs one model turn.** A plugin cannot drive the built-in browser in auto mode, so `-i`
+asks the model to open the page. The request appears in the conversation, and it waits if the
+model is busy.
 
 ## The `worktree` plugin
 

@@ -61,6 +61,12 @@
       "source": "./explain",
       "description": "Plain-language explanations — turn the previous outcome or a named subject into an explanation a non-technical reader can follow: what changed, what it fixes, and what they will notice. Read-only.",
       "category": "productivity"
+    },
+    {
+      "name": "gitgraph",
+      "source": "./gitgraph",
+      "description": "Git history as a page — /gitgraph opens the whole commit graph of the repository or a submodule in your browser (or the Claude desktop app's built-in browser with -i): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy and add-to-prompt.",
+      "category": "productivity"
     }
   ]
 }

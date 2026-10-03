@@ -22,6 +22,9 @@ EXPECTED = {
     "worktree": {"create", "init", "list", "remove", "cleanup"},
     "explain": {"explain"},
 }
+# Claude Code plugins with no Codex package yet. gitgraph is a function-hooks plugin: it runs in
+# Claude Code's plugin engine, which Codex does not have.
+CLAUDE_ONLY = {"gitgraph"}
 
 
 class CodexPackagesTest(unittest.TestCase):
@@ -31,8 +34,9 @@ class CodexPackagesTest(unittest.TestCase):
         self.assertEqual(catalogue["name"], "sebastiansulinski-codex")
         self.assertEqual(
             [entry["name"] for entry in catalogue["plugins"]],
-            [entry["name"] for entry in original["plugins"]],
+            [entry["name"] for entry in original["plugins"] if entry["name"] not in CLAUDE_ONLY],
         )
+        self.assertTrue(CLAUDE_ONLY <= {entry["name"] for entry in original["plugins"]})
         self.assertEqual(set(EXPECTED), {entry["name"] for entry in catalogue["plugins"]})
         for entry in catalogue["plugins"]:
             self.assertEqual(entry["source"], {"source": "local", "path": f"./plugins/{entry['name']}"})
@@ -117,6 +121,24 @@ class CodexPackagesTest(unittest.TestCase):
                         self.assertFalse(member.startswith("/") or ".." in Path(member).parts)
                         source = ROOT / "plugins" / manifest["name"] / member
                         self.assertEqual(bundle.read(member), source.read_bytes())
+
+
+class ClaudeOnlyPackagesTest(unittest.TestCase):
+    def test_gitgraph_is_a_self_contained_function_hooks_plugin(self):
+        package = ROOT / "gitgraph"
+        manifest = json.loads((package / ".claude-plugin/plugin.json").read_text())
+        self.assertEqual(manifest["name"], "gitgraph")
+        self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
+        self.assertEqual(manifest["author"]["name"], "Sebastian Sulinski")
+        self.assertTrue((package / manifest["types"]).is_file())
+        hooks = json.loads((package / "hooks/hooks.json").read_text())
+        for module in hooks["modules"]:
+            self.assertTrue((package / "hooks" / module).resolve().is_file(), module)
+        self.assertFalse((package / "commands").exists())
+        self.assertFalse((package / "skills").exists())
+        self.assertFalse((ROOT / "plugins" / "gitgraph").exists())
+        for generated in ("tsconfig.json", ".claude-plugin/types"):
+            self.assertFalse((package / generated).exists(), f"{generated} is written per machine by Claude Code")
 
 
 if __name__ == "__main__":
