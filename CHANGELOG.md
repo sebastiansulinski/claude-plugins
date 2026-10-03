@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-10-03
+
+### Added
+
+- **`gitgraph` for Codex (1.0.0).** The `gitgraph:gitgraph` skill builds the same history page for
+  the repository or a submodule and opens it in the default browser, or in Codex's in-app browser
+  when asked. It runs its own helper on `127.0.0.1:47322` with pages in `/tmp/gitgraph`, asking to
+  run the two steps Codex's sandbox refuses (listening on a port, opening a browser) outside it;
+  declined, the page opens from disk. Add-to-prompt stays a Claude Code feature.
+
+### Changed
+
+- **`gitgraph` 1.1.0 for Claude Code builds the page with a shared Python runtime**
+  (`gitgraph/runtime/gitgraph.py`), the one the Codex skill runs, so the two cannot drift apart.
+  `/gitgraph` now needs Python 3 to build the page and says so when `python3` is missing. The page
+  data is unchanged: it was checked byte for byte against the previous TypeScript builder on three
+  repositories.
+- The page switches on its Changes tab and find by file only when the helper that serves it
+  answers, and offers add-to-prompt only when, in addition, it was built by a Claude Code session.
+  A page opened from disk shows the history and copying alone.
+- The helper (now `gitgraph-server-4`) starts fully detached and records its process id beside the
+  pages; an older helper still running is replaced on the next `/gitgraph`.
+- `scripts/sync-gitgraph.py` regenerates the Claude plugin's `hooks/runtime.ts` and the Codex
+  package's copy from the runtime, with `--check` for drift. The contract tests now cover Codex
+  packages built from a Claude function-hooks plugin, and new runtime tests cover parsing, lanes,
+  refs, the stash exclusion, the 20,000-commit cap, the helper from a fresh folder, and the page's
+  four modes in headless Chrome.
+
 ## [1.8.0] - 2026-10-03
 
 ### Added
