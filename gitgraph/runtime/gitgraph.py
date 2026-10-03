@@ -1,7 +1,298 @@
-import type { GitGraph } from '../types'
-import { PALETTE } from './layout'
+#!/usr/bin/env python3
+"""gitgraph: the whole Git history of a repository as one self-contained page.
 
-const STYLE = String.raw`
+The one runtime behind the Claude Code plugin and the Codex skill, for Python 3.8 or later:
+
+  gitgraph.py ensure --root DIR --port PORT
+      Starts the helper unless this version (or a newer one) already listens on PORT, and
+      prints {"isUp": true|false}. The helper runs fully detached, so it outlives the command.
+  gitgraph.py build --repo PATH [--submodule NAME] --out DIR [--prompt JSON] [--rerun TEXT]
+      Reads the history of the repository at PATH (or of its submodule NAME), writes the page
+      into DIR, registers the repository in DIR/repos.json for the helper, and prints
+      {"file", "key", "repository", "commits", "isTruncated"}, or {"error"} with exit code 1.
+  gitgraph.py serve --root DIR --port PORT
+      The helper: serves DIR's pages on 127.0.0.1, answers /changes and /touching for the
+      repositories DIR/repos.json names, and relays "add to prompt" requests (/prompt,
+      /inbox). It exits after thirty minutes without a request.
+
+The page's repository features (the Changes tab, find by file) switch on when the page,
+served over http by the helper, hears back from /ping; "add to prompt" needs that and the
+session details only the Claude Code plugin passes with --prompt. Opened from disk, the page
+offers the history and copying alone.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
+
+VERSION = 'gitgraph-server-4'
+LIMIT = 20000
+PALETTE = ['#a855f7', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6', '#ef4444', '#84cc16']
+
+FIELD = '\x1f'
+RECORD = '\x1e'
+END = '\x1d'
+
+# Each record opens with RECORD and its fields close with END, so the --shortstat line git
+# prints after the format lands inside the record it belongs to.
+LOG_ARGUMENTS = [
+    '--topo-order',
+    '--decorate=full',
+    '--abbrev=8',
+    '--shortstat',
+    '--format=%x1e' + '%x1f'.join(['%H', '%h', '%P', '%p', '%D', '%an', '%ae', '%cn', '%ce', '%at', '%ct', '%s', '%b']) + '%x1d',
+]
+
+# What JavaScript's String.prototype.trim removes, so commit bodies match what the page used to get.
+JAVASCRIPT_WHITESPACE = '\t\n\v\f\r                  　﻿'
+
+
+class Failure(Exception):
+    """A reason the command cannot go on, said to the person in one line."""
+
+
+def run_git(path, *arguments, timeout=60):
+    done = subprocess.run(['git', '-C', path] + list(arguments), capture_output=True, timeout=timeout)
+
+    return done.returncode, done.stdout.decode('utf-8', 'replace'), done.stderr.decode('utf-8', 'replace')
+
+
+# Reading the history ---------------------------------------------------------------------
+
+
+def resolve_target(start, argument):
+    """
+    Resolves what to draw: the repository at `start`, or the submodule named by `argument`
+    (its name, its path, or the last segment of its path), or any other directory that is a
+    Git repository. Returns (label, top-level path).
+    """
+    code, top, _ = run_git(start, 'rev-parse', '--show-toplevel')
+    if code != 0:
+        raise Failure('Not inside a Git repository.')
+    root = top.strip()
+    root_name = root.split('/')[-1] or root
+
+    if not argument:
+        return root_name, root
+
+    _, listed, _ = run_git(root, 'config', '--file', '.gitmodules', '--get-regexp', r'^submodule\..*\.path$')
+    submodules = []
+    for line in [line for line in listed.split('\n') if line]:
+        parts = line.split(' ')
+        key = parts[0]
+        path = parts[1] if len(parts) > 1 else ''
+        submodules.append({'name': re.sub(r'\.path$', '', re.sub(r'^submodule\.', '', key)), 'path': path})
+    wanted = argument.rstrip('/')
+    submodule = next(
+        (one for one in submodules if wanted in (one['name'], one['path'], one['path'].split('/')[-1])),
+        None,
+    )
+    if submodule:
+        path = root + '/' + submodule['path']
+    else:
+        path = wanted if wanted.startswith('/') else root + '/' + wanted
+    try:
+        code, inner, _ = run_git(path, 'rev-parse', '--show-toplevel')
+    except OSError:
+        code, inner = 1, ''
+
+    if code != 0 or (submodule and inner.strip() != path):
+        if submodule:
+            raise Failure('Submodule "{}" is not initialised (git submodule update --init {}).'.format(
+                submodule['name'], submodule['path']))
+        known = ', '.join(one['path'] for one in submodules)
+        raise Failure('"{}" is not a submodule or Git repository.{}'.format(
+            argument, ' Submodules: {}.'.format(known) if known else ''))
+
+    return '{}/{}'.format(root_name, submodule['path'] if submodule else wanted), inner.strip()
+
+
+def parse_refs(decoration):
+    """
+    Orders and names one commit's refs, from a `--decorate=full` decoration: the
+    checked-out branch first, then local branches, tags and remote branches. A remote
+    branch of the same name as a local one joins it (`origin & main`); each remote's HEAD
+    is dropped.
+    """
+    is_head = False
+    head = None
+    locals_ = []
+    tags = []
+    remotes = []
+
+    for entry in [part for part in decoration.split(', ') if part]:
+        if entry == 'HEAD':
+            is_head = True
+        elif entry.startswith('HEAD -> refs/heads/'):
+            is_head = True
+            head = entry[len('HEAD -> refs/heads/'):]
+        elif entry.startswith('refs/heads/'):
+            locals_.append(entry[len('refs/heads/'):])
+        elif entry.startswith('tag: refs/tags/'):
+            tags.append(entry[len('tag: refs/tags/'):])
+        elif entry.startswith('refs/remotes/') and not entry.endswith('/HEAD'):
+            remotes.append(entry[len('refs/remotes/'):])
+
+    raw = {
+        'branches': locals_ if head is None else [head] + locals_,
+        'remotes': list(remotes),
+        'tags': list(tags),
+        'headBranch': head,
+    }
+
+    def with_remotes(branch):
+        matching = [remote for remote in remotes if remote[remote.find('/') + 1:] == branch]
+        for remote in matching:
+            remotes.remove(remote)
+
+        return ' & '.join([remote[:remote.find('/')] for remote in matching] + [branch])
+
+    refs = []
+    if head is not None:
+        refs.append({'label': with_remotes(head), 'kind': 'head'})
+    refs.extend({'label': with_remotes(branch), 'kind': 'branch'} for branch in locals_)
+    refs.extend({'label': tag, 'kind': 'tag'} for tag in tags)
+    refs.extend({'label': remote, 'kind': 'remote'} for remote in remotes)
+
+    result = {'refs': refs, 'isHead': is_head}
+    result.update(raw)
+
+    return result
+
+
+def stat_of(text, pattern):
+    match = re.search(pattern, text)
+
+    return int(match.group(1)) if match else 0
+
+
+def number(text):
+    try:
+        return int(text)
+    except ValueError:
+        return 0
+
+
+def parse_log(stdout):
+    """Splits `git log` output written with LOG_ARGUMENTS into commits, newest first."""
+    commits = []
+    for record in stdout.split(RECORD):
+        if END not in record:
+            continue
+        pieces = record.split(END)
+        fields_text, stat_text = pieces[0], pieces[1]
+        fields = fields_text.split(FIELD)
+        fields += [''] * (13 - len(fields))
+        full_hash, hash_, parents, parent_hashes, decoration, author, author_email = fields[:7]
+        committer, committer_email, authored, committed, subject, body = fields[7:13]
+        commit = {
+            'fullHash': full_hash,
+            'hash': hash_,
+            'parents': [parent for parent in parents.split(' ') if parent],
+            'parentHashes': [parent for parent in parent_hashes.split(' ') if parent],
+        }
+        commit.update(parse_refs(decoration))
+        commit.update({
+            'author': author,
+            'authorEmail': author_email,
+            'committer': committer,
+            'committerEmail': committer_email,
+            'isCommittedByOther': committer != author,
+            'time': number(authored or '0'),
+            'commitTime': number(committed or '0'),
+            'subject': subject,
+            'body': body.strip(JAVASCRIPT_WHITESPACE),
+            'stats': {
+                'files': stat_of(stat_text, r'(\d+) files? changed'),
+                'insertions': stat_of(stat_text, r'(\d+) insertions?'),
+                'deletions': stat_of(stat_text, r'(\d+) deletions?'),
+            },
+        })
+        commits.append(commit)
+
+    return commits
+
+
+def layout_graph(raw):
+    """
+    Assigns every commit a lane (a column of the graph) and every parent link an edge: the
+    edge leaves the child, may bend once at the child's row into the lane it runs down, and
+    may bend again at the parent's row.
+
+    Commits arrive newest first and keep that order as rows. A parent outside the loaded set
+    leaves an edge with parentRow -1, drawn running off the bottom.
+    """
+    slots = []
+    pending = {}
+    edges = []
+
+    def free_slot():
+        return slots.index(None) if None in slots else len(slots)
+
+    def put(slot, value):
+        if slot == len(slots):
+            slots.append(value)
+        else:
+            slots[slot] = value
+
+    commits = []
+    for row, commit in enumerate(raw):
+        matching = [slot for slot, hash_ in enumerate(slots) if hash_ == commit['fullHash']]
+        lane = matching[0] if matching else free_slot()
+
+        for slot in matching:
+            for edge_index in pending.get(slot, []):
+                edges[edge_index]['parentRow'] = row
+                edges[edge_index]['parentLane'] = lane
+            slots[slot] = None
+            pending[slot] = []
+
+        put(lane, None)
+        for position, parent in enumerate(commit['parents']):
+            slot = lane
+            if position > 0:
+                slot = slots.index(parent) if parent in slots else free_slot()
+            put(slot, parent)
+            edges.append({'childRow': row, 'childLane': lane, 'lane': slot, 'parentRow': -1, 'parentLane': slot})
+            pending[slot] = pending.get(slot, []) + [len(edges) - 1]
+
+        laid = {key: value for key, value in commit.items() if key != 'parents'}
+        laid['row'] = row
+        laid['lane'] = lane
+        commits.append(laid)
+
+    lanes = max([len(slots)] + [commit['lane'] + 1 for commit in commits] + [0])
+
+    return {'commits': commits, 'edges': edges, 'lanes': lanes}
+
+
+def load_graph(label, path):
+    done = subprocess.run(
+        ['git', 'log', '--no-show-signature', '--exclude=refs/stash', '--all', '--max-count={}'.format(LIMIT + 1)]
+        + LOG_ARGUMENTS,
+        cwd=path, capture_output=True, timeout=120,
+    )
+    if done.returncode != 0:
+        raise Failure(done.stderr.decode('utf-8', 'replace').strip() or 'git log failed.')
+    raw = parse_log(done.stdout.decode('utf-8', 'replace'))
+    graph = layout_graph(raw[:LIMIT])
+    graph.update({'repository': label, 'path': path, 'isTruncated': len(raw) > LIMIT})
+
+    return graph
+
+
+# The page --------------------------------------------------------------------------------
+
+STYLE = r'''
 :root{color-scheme:dark;--bg:#1c1c1e;--side:#232326;--fg:#e5e7eb;--dim:#9ca3af;--line:#33333a;--hover:#ffffff0d;--sel:#3b82f633;--menu:#2a2a2e;--bar:#141416;--on:#ffffff1c;--edge:#46464e}
 :root[data-theme="light"]{color-scheme:light;--bg:#ffffff;--side:#f6f6f7;--fg:#1f2937;--dim:#6b7280;--line:#e5e7eb;--hover:#0000000a;--sel:#3b82f626;--menu:#ffffff;--bar:#ebebee;--on:#00000014;--edge:#c3c7ce}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -135,13 +426,17 @@ path{fill:none;stroke-width:2;stroke-linecap:round}
 #detail .p{display:inline-block;vertical-align:middle;font-size:11px;line-height:15px;font-weight:600;padding:0 8px;border-radius:9px;border:1px solid currentColor;margin-right:6px}
 #menu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--menu);border:1px solid var(--line);padding:7px 14px;border-radius:8px;box-shadow:0 6px 18px #0003}
-`
+'''
 
-// The page's own script: plain ES5-style JavaScript with no template literals, so it can
-// sit inside this module's String.raw template untouched.
-const SCRIPT = String.raw`
+# The page's own script: plain ES5-style JavaScript, kept byte for byte as the page has it.
+SCRIPT = r'''
 (function () {
   var ROW = 28, LANE = 14, GUTTER = 14, CHUNK = 400;
+  // The gitgraph helper answered /ping: the page was opened through it, so the repository
+  // features (Changes, find by file) work, and "add to prompt" does when the page carries
+  // the session details (PROMPT) of the Claude Code session that built it.
+  var HELPER = false;
+  function canPrompt() { return HELPER && !!PROMPT; }
   var commits = DATA.commits, edges = DATA.edges;
   var list = document.getElementById('list');
   var flist = document.getElementById('flist');
@@ -317,11 +612,11 @@ const SCRIPT = String.raw`
     area.value = text; document.body.appendChild(area); area.select();
     document.execCommand('copy'); area.remove();
   }
-  // Add to prompt: the page posts the text to the local bridge; the Claude Code session
+  // Add to prompt: the page posts the text to the local helper; the Claude Code session
   // that opened the page collects it and puts it in its prompt box (never sends it).
   function addToPrompt(text, label) {
-    if (!BRIDGE) { copy(text, label); return; }
-    fetch('/prompt', { method: 'POST', body: JSON.stringify({ session: BRIDGE.session, token: BRIDGE.token, text: text }) })
+    if (!canPrompt()) { copy(text, label); return; }
+    fetch('/prompt', { method: 'POST', body: JSON.stringify({ session: PROMPT.session, token: PROMPT.token, text: text }) })
       .then(function (response) {
         show(response.ok ? 'Added ' + (label || text) + ' to the prompt' : 'Could not reach Claude Code: copied instead');
         if (!response.ok) copy(text, label);
@@ -329,7 +624,7 @@ const SCRIPT = String.raw`
   }
   function both(text, label, what) {
     var items = [['Copy ' + what, function () { copy(text, label); }]];
-    if (BRIDGE) items.push(['Add ' + what + ' to prompt', function () { addToPrompt(text, label); }]);
+    if (canPrompt()) items.push(['Add ' + what + ' to prompt', function () { addToPrompt(text, label); }]);
     return items;
   }
 
@@ -443,18 +738,18 @@ const SCRIPT = String.raw`
       '<code class="sha" data-copy="' + c.fullHash + '" title="Copy the full hash">' + c.hash + '</code>' +
       '<span class="who">' + esc(c.author) + ' · ' + when(c.time) + '</span>' +
       '<div class="tabs"><button data-tab="details"' + (tab === 'details' ? ' class="on"' : '') + '>Details</button>' +
-      (BRIDGE ? '<button data-tab="changes"' + (tab === 'changes' ? ' class="on"' : '') + '>Changes <span class="n">' + (c.stats.files || '…') + '</span></button>' : '') + '</div>' +
-      '<div class="actions"><div class="seg"' + (tab === 'changes' && BRIDGE ? ' hidden' : '') + '>' +
+      (HELPER ? '<button data-tab="changes"' + (tab === 'changes' ? ' class="on"' : '') + '>Changes <span class="n">' + (c.stats.files || '…') + '</span></button>' : '') + '</div>' +
+      '<div class="actions"><div class="seg"' + (tab === 'changes' && HELPER ? ' hidden' : '') + '>' +
       '<button data-copy-as="text" title="Subject and description as plain text">' + icon.text + 'Copy text</button>' +
       '<button data-copy-as="markdown" title="Markdown in a code block: pastes into Slack as a code block, into an editor as Markdown">' + icon.markdown + 'Copy Markdown</button>' +
       '</div><button class="x" title="Close (Esc)">×</button></div></div>' +
-      '<div class="cols"' + (tab === 'changes' && BRIDGE ? ' hidden' : '') + '><div class="meta"><dl>' + rows.map(function (r) { return '<dt>' + r[0] + '</dt><dd title="' + r[2] + '">' + r[1] + '</dd>'; }).join('') + '</dl></div>' +
+      '<div class="cols"' + (tab === 'changes' && HELPER ? ' hidden' : '') + '><div class="meta"><dl>' + rows.map(function (r) { return '<dt>' + r[0] + '</dt><dd title="' + r[2] + '">' + r[1] + '</dd>'; }).join('') + '</dl></div>' +
       '<div class="grip v" data-resize="meta"></div>' +
       '<div class="text"><h2>' + esc(c.subject) + '</h2>' + (c.body ? '<pre>' + esc(c.body) + '</pre>' : '<p class="none">No further description.</p>') + '</div></div>' +
-      '<div class="changes"' + (tab === 'changes' && BRIDGE ? '' : ' hidden') + '><div class="files"><p class="empty">Loading changes…</p></div>' +
+      '<div class="changes"' + (tab === 'changes' && HELPER ? '' : ' hidden') + '><div class="files"><p class="empty">Loading changes…</p></div>' +
       '<div class="grip v" data-resize="files"></div><div class="diff"></div></div>';
     detail.hidden = false;
-    if (tab === 'changes' && BRIDGE) loadChanges(c);
+    if (tab === 'changes' && HELPER) loadChanges(c);
   }
   function closeDetail() { detail.hidden = true; shownRow = -1; }
 
@@ -472,7 +767,7 @@ const SCRIPT = String.raw`
   }
   function loadChanges(c) {
     if (changesOf[c.fullHash]) return renderChanges(c, changesOf[c.fullHash]);
-    fetch('/changes?repo=' + encodeURIComponent(BRIDGE.repo) + '&hash=' + c.fullHash)
+    fetch('/changes?repo=' + encodeURIComponent(REPO) + '&hash=' + c.fullHash)
       .then(function (response) { return response.json(); })
       .then(function (data) {
         if (data.error) throw new Error(data.error);
@@ -481,7 +776,7 @@ const SCRIPT = String.raw`
       })
       .catch(function () {
         if (shownRow !== c.row) return;
-        detail.querySelector('.files').innerHTML = '<p class="empty">Changes could not be read. Run /gitgraph again to restart the helper.</p>';
+        detail.querySelector('.files').innerHTML = '<p class="empty">Changes could not be read. Run ' + esc(RERUN) + ' again to restart the helper.</p>';
       });
   }
   function counts(file) {
@@ -631,7 +926,7 @@ const SCRIPT = String.raw`
   // Opens a commit's details. From the file filter they open straight onto Changes, at the
   // first file that matched.
   function openCommit(c, fromFiles) {
-    var isFiles = fromFiles && BRIDGE;
+    var isFiles = fromFiles && HELPER;
     preferred = isFiles ? { hash: c.fullHash, paths: fileMatches[c.fullHash] || [] } : null;
     if (isFiles) tab = 'changes';
     openDetail(c);
@@ -685,10 +980,20 @@ const SCRIPT = String.raw`
   var find = document.getElementById('find'), counter = document.getElementById('count');
   var modes = document.getElementById('modes'), mode = 'commits';
   var fileMatches = {}, fileTimer = null, fileQuery = 0, filterHits = [], filterAt = -1;
-  if (!BRIDGE) {
-    var filesButton = modes.querySelector('[data-mode="files"]');
-    filesButton.disabled = true;
-    filesButton.title = 'Needs the gitgraph helper: run /gitgraph again';
+  // The helper's features switch on once it answers; opened from disk, the page never asks.
+  var filesButton = modes.querySelector('[data-mode="files"]'), filesTitle = filesButton.title;
+  filesButton.disabled = true;
+  filesButton.title = 'Needs the gitgraph helper: run ' + RERUN + ' again';
+  if (/^https?:$/.test(location.protocol)) {
+    fetch('/ping').then(function (response) { return response.ok ? response.text() : ''; }).then(function (version) {
+      if (version.indexOf('gitgraph-server-') !== 0) return;
+      HELPER = true;
+      document.documentElement.setAttribute('data-helper', 'on');
+      if (PROMPT) document.documentElement.setAttribute('data-prompt', 'on');
+      filesButton.disabled = false;
+      filesButton.title = filesTitle;
+      if (shownRow >= 0) openDetail(commits[shownRow]);
+    }, function () {});
   }
   function setCount(text) {
     counter.textContent = text;
@@ -740,7 +1045,7 @@ const SCRIPT = String.raw`
     setCount('…');
     var ticket = ++fileQuery;
     fileTimer = setTimeout(function () {
-      fetch('/touching?repo=' + encodeURIComponent(BRIDGE.repo) + '&q=' + encodeURIComponent(needle))
+      fetch('/touching?repo=' + encodeURIComponent(REPO) + '&q=' + encodeURIComponent(needle))
         .then(function (response) {
           if (response.status === 404) throw new Error('outdated');
           return response.json();
@@ -759,8 +1064,8 @@ const SCRIPT = String.raw`
           list.hidden = true;
           flist.hidden = false;
           flist.innerHTML = '<p class="none">' + (String(error.message) === 'outdated'
-            ? 'The gitgraph helper running now is older than this page. Run /gitgraph again to update it.'
-            : 'The gitgraph helper did not answer. Run /gitgraph again to restart it.') + '</p>';
+            ? 'The gitgraph helper running now is older than this page. Run ' + esc(RERUN) + ' again to update it.'
+            : 'The gitgraph helper did not answer. Run ' + esc(RERUN) + ' again to restart it.') + '</p>';
         });
     }, 220);
   }
@@ -840,47 +1145,402 @@ const SCRIPT = String.raw`
   var head = commits.filter(function (c) { return c.isHead; })[0];
   if (head && head.row > 20) select(head.row);
 })();
-`
+'''
 
-const SUN =
-  '<svg class="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/>' +
-  '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
-const MOON = '<svg class="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>'
+SUN = (
+    '<svg class="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/>'
+    '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+)
+MOON = '<svg class="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>'
 
-/**
- * A self-contained page for the whole history: a refs tree on the left
- * (branches, remotes, tags; click jumps to the latest commit, right-click
- * copies the full name), the graph with subject, refs, author, date and hash
- * per commit in one scroll, a details panel a row click opens, and a find box.
- * With `bridge`, right-click menus also add a name or hash to the prompt. The data rides in the page as
- * JSON, escaped so it cannot close the script element.
- */
-export function buildPage(
-  graph: GitGraph,
-  generatedAt: string,
-  bridge: { session: string; token: string; repo: string } | null,
-): string {
-  const data = JSON.stringify({ commits: graph.commits, edges: graph.edges }).replace(/</g, '\\u003c')
-  const title = graph.repository.replace(/[&<>"]/g, character => `&#${character.charCodeAt(0)};`)
-  const truncated = graph.isTruncated ? ' most recent' : ''
 
-  return (
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    `<title>Git graph · ${title}</title><style>${STYLE}</style>` +
-    // Dark unless this browser chose light before; set before the body draws, so no flash.
-    "<script>try{if(localStorage.getItem('gitgraph-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(error){}</script>" +
-    '</head><body><header>' +
-    `<strong>${title}</strong><span>${graph.commits.length}${truncated} commits · generated ${generatedAt} · run /gitgraph again to refresh</span>` +
-    '<div class="find"><div class="modes" id="modes">' +
-    '<button data-mode="commits" class="on" title="Find commits by subject, author, hash or ref">Commits</button>' +
-    '<button data-mode="files" title="Show only the commits that changed a file whose path contains the text">Files</button></div>' +
-    '<div class="box"><input id="find" placeholder="Find commits: subject, author, hash or ref" autocomplete="off">' +
-    '<span class="count" id="count"></span></div></div>' +
-    `<button class="mode" id="mode" title="Switch between dark and light">${SUN}${MOON}</button></header>` +
-    '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">' +
-    '<div id="list"></div><div id="flist" hidden></div><div id="detail" hidden></div></div></div>' +
-    '<div id="menu" hidden></div><div id="toast" hidden></div>' +
-    `<script>var DATA = ${data}; var PALETTE = ${JSON.stringify(PALETTE)}; var BRIDGE = ${JSON.stringify(bridge)};</script>` +
-    `<script>${SCRIPT}</script></body></html>`
-  )
-}
+def to_json(value):
+    """JSON as JavaScript's JSON.stringify writes it, escaped so it cannot close a script element."""
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
+
+
+def escape_html(text):
+    return re.sub(r'[&<>"]', lambda match: '&#{};'.format(ord(match.group(0))), text)
+
+
+def build_page(graph, generated_at, repo, prompt, rerun):
+    """
+    A self-contained page for the whole history: a refs tree on the left (branches, remotes,
+    tags; click jumps to the latest commit, right-click copies the full name), the graph with
+    subject, refs, author, date and hash per commit in one scroll, a details panel a row click
+    opens, and a find box. The data rides in the page as JSON.
+    """
+    title = escape_html(graph['repository'])
+    truncated = ' most recent' if graph['isTruncated'] else ''
+
+    return (
+        '<!doctype html><html><head><meta charset="utf-8">'
+        '<title>Git graph · ' + title + '</title><style>' + STYLE + '</style>'
+        # Dark unless this browser chose light before; set before the body draws, so no flash.
+        "<script>try{if(localStorage.getItem('gitgraph-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(error){}</script>"
+        '</head><body><header>'
+        '<strong>' + title + '</strong><span>' + str(len(graph['commits'])) + truncated + ' commits · generated '
+        + escape_html(generated_at) + ' · run ' + escape_html(rerun) + ' again to refresh</span>'
+        '<div class="find"><div class="modes" id="modes">'
+        '<button data-mode="commits" class="on" title="Find commits by subject, author, hash or ref">Commits</button>'
+        '<button data-mode="files" title="Show only the commits that changed a file whose path contains the text">Files</button></div>'
+        '<div class="box"><input id="find" placeholder="Find commits: subject, author, hash or ref" autocomplete="off">'
+        '<span class="count" id="count"></span></div></div>'
+        '<button class="mode" id="mode" title="Switch between dark and light">' + SUN + MOON + '</button></header>'
+        '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">'
+        '<div id="list"></div><div id="flist" hidden></div><div id="detail" hidden></div></div></div>'
+        '<div id="menu" hidden></div><div id="toast" hidden></div>'
+        '<script>var DATA = ' + to_json({'commits': graph['commits'], 'edges': graph['edges']})
+        + '; var PALETTE = ' + to_json(PALETTE) + '; var REPO = ' + to_json(repo)
+        + '; var PROMPT = ' + to_json(prompt) + '; var RERUN = ' + to_json(rerun) + ';</script>'
+        '<script>' + SCRIPT + '</script></body></html>'
+    )
+
+
+def write_atomically(path, text):
+    temporary = '{}.{}.tmp'.format(path, os.getpid())
+    with open(temporary, 'w', encoding='utf-8') as handle:
+        handle.write(text)
+    os.replace(temporary, path)
+
+
+def register_repository(directory, key, path):
+    """Records which repository a page's key names, so the helper reads only registered ones."""
+    file = os.path.join(directory, 'repos.json')
+    try:
+        with open(file, encoding='utf-8') as handle:
+            known = json.load(handle)
+    except (OSError, ValueError):
+        known = {}
+    if not isinstance(known, dict):
+        known = {}
+    known[key] = path
+    write_atomically(file, json.dumps(known, indent=2))
+
+
+def read_prompt(text):
+    if not text:
+        return None
+    try:
+        prompt = json.loads(text)
+    except ValueError:
+        raise Failure('--prompt must be JSON with "session" and "token".')
+    if not isinstance(prompt, dict) or not isinstance(prompt.get('session'), str) or not isinstance(prompt.get('token'), str):
+        raise Failure('--prompt must be JSON with "session" and "token".')
+
+    return {'session': prompt['session'], 'token': prompt['token']}
+
+
+def build(arguments):
+    prompt = read_prompt(arguments.prompt)
+    label, path = resolve_target(os.path.abspath(os.path.expanduser(arguments.repo)), arguments.submodule)
+    graph = load_graph(label, path)
+    if not graph['commits']:
+        raise Failure('{} has no commits.'.format(label))
+
+    directory = os.path.abspath(os.path.expanduser(arguments.out))
+    os.makedirs(directory, exist_ok=True)
+    key = re.sub(r'[^\w.-]+', '-', label, flags=re.ASCII)
+    file = os.path.join(directory, key + '.html')
+    register_repository(directory, key, path)
+    generated_at = time.strftime('%d/%m/%Y, %H:%M')
+    write_atomically(file, build_page(graph, generated_at, key, prompt, arguments.rerun))
+
+    return {
+        'file': file,
+        'key': key,
+        'repository': label,
+        'commits': len(graph['commits']),
+        'isTruncated': graph['isTruncated'],
+    }
+
+
+# The helper ------------------------------------------------------------------------------
+
+IDLE_SECONDS = 1800
+EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+HASH = re.compile(r'^[0-9a-f]{7,40}$')
+FILE_LINES = 3000
+TOTAL_CHARS = 3000000
+
+
+def helper_git(path, *arguments):
+    return run_git(path, '-c', 'core.quotepath=off', *arguments)[1]
+
+
+def changes(path, commit):
+    """A commit's files and patches, against its first parent (the empty tree for a root commit)."""
+    parents = helper_git(path, 'rev-list', '--parents', '-n', '1', commit).split()
+    if not parents:
+        return {'error': 'unknown commit'}
+    base = parents[1] if len(parents) > 1 else EMPTY_TREE
+    files = []
+    tokens = helper_git(path, 'diff', '--name-status', '-M', '-z', base, commit).split('\0')
+    index = 0
+    while index < len(tokens) and tokens[index]:
+        code = tokens[index]
+        if code[0] in 'RC':
+            files.append({'status': code[0], 'from': tokens[index + 1], 'path': tokens[index + 2]})
+            index += 3
+        else:
+            files.append({'status': code[0], 'from': None, 'path': tokens[index + 1]})
+            index += 2
+    tokens = helper_git(path, 'diff', '--numstat', '-M', '-z', base, commit).split('\0')
+    index = 0
+    stats = []
+    while index < len(tokens) and tokens[index]:
+        added, deleted, name = tokens[index].split('\t', 2)
+        index += 3 if name == '' else 1
+        stats.append((added, deleted))
+    patch = helper_git(path, 'diff', '-M', '--no-color', '--no-ext-diff', base, commit)
+    chunks = re.split(r'^diff --git ', patch, flags=re.M)[1:]
+    spent = 0
+    for position, entry in enumerate(files):
+        added, deleted = stats[position] if position < len(stats) else ('0', '0')
+        entry['binary'] = added == '-'
+        entry['added'] = 0 if added == '-' else int(added)
+        entry['deleted'] = 0 if deleted == '-' else int(deleted)
+        chunk = chunks[position] if position < len(chunks) else ''
+        start = chunk.find('\n@@')
+        hunks = chunk[start + 1:] if start >= 0 else ''
+        lines = hunks.split('\n')
+        entry['truncated'] = len(lines) > FILE_LINES or spent > TOTAL_CHARS
+        hunks = '' if spent > TOTAL_CHARS else '\n'.join(lines[:FILE_LINES])
+        spent += len(hunks)
+        entry['hunks'] = hunks
+
+    return {'isMerge': len(parents) > 2, 'isRoot': len(parents) == 1, 'files': files}
+
+
+def touching(cache, key, path, needle):
+    """The commits whose changed paths (either side of a rename; a merge against its first parent) contain `needle`."""
+    cached = cache.get(key)
+    if not cached or time.time() - cached[0] > 30:
+        output = helper_git(path, 'log', '--all', '--diff-merges=first-parent', '--name-status', '-M', '--format=%x1e%H')
+        commits = []
+        for record in output.split('\x1e')[1:]:
+            lines = record.split('\n')
+            paths = []
+            for line in lines[1:]:
+                parts = line.split('\t')
+                if len(parts) > 1:
+                    paths.extend(parts[1:])
+            commits.append((lines[0].strip(), paths))
+        cached = (time.time(), commits)
+        cache[key] = cached
+    needle = needle.lower()
+    matches = {}
+    for commit, paths in cached[1]:
+        hits = [name for name in paths if needle in name.lower()]
+        if hits:
+            matches[commit] = hits[:20]
+
+    return {'matches': matches}
+
+
+class Helper(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+    def __init__(self, root, port):
+        HTTPServer.__init__(self, ('127.0.0.1', port), Handler)
+        self.root = root
+        self.queues = {}
+        self.lock = threading.Lock()
+        self.last_seen = time.time()
+        self.touched = {}
+
+    def registered(self, key):
+        try:
+            with open(os.path.join(self.root, 'repos.json'), encoding='utf-8') as handle:
+                path = json.load(handle).get(key)
+        except Exception:
+            return None
+
+        return path if isinstance(path, str) and os.path.isdir(path) else None
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *arguments):
+        pass
+
+    def reply(self, code, body=b'', kind='text/plain; charset=utf-8'):
+        self.send_response(code)
+        self.send_header('Content-Type', kind)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def answer(self, work):
+        try:
+            body = json.dumps(work()).encode()
+        except Exception as error:
+            body = json.dumps({'error': str(error)}).encode()
+
+        return self.reply(200, body, 'application/json')
+
+    def do_GET(self):
+        helper = self.server
+        helper.last_seen = time.time()
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if url.path == '/ping':
+            return self.reply(200, VERSION.encode())
+        if url.path == '/quit':
+            self.reply(200, b'bye')
+            threading.Thread(target=helper.shutdown).start()
+            return
+        if url.path == '/changes':
+            path = helper.registered(query.get('repo', [''])[0])
+            commit = query.get('hash', [''])[0]
+            if not path or not HASH.match(commit):
+                return self.reply(404, b'{"error":"unknown repository or commit"}', 'application/json')
+            return self.answer(lambda: changes(path, commit))
+        if url.path == '/touching':
+            key = query.get('repo', [''])[0]
+            path = helper.registered(key)
+            needle = query.get('q', [''])[0]
+            if not path or not needle:
+                return self.reply(404, b'{"error":"unknown repository or empty search"}', 'application/json')
+            return self.answer(lambda: touching(helper.touched, key, path, needle))
+        if url.path == '/inbox':
+            key = (query.get('session', [''])[0], query.get('token', [''])[0])
+            with helper.lock:
+                items = helper.queues.pop(key, [])
+            return self.reply(200, json.dumps(items).encode(), 'application/json')
+        name = os.path.basename(url.path)
+        path = os.path.join(helper.root, name)
+        if name.endswith('.html') and os.path.isfile(path):
+            with open(path, 'rb') as page:
+                return self.reply(200, page.read(), 'text/html; charset=utf-8')
+        self.reply(404, b'not found')
+
+    def do_POST(self):
+        helper = self.server
+        helper.last_seen = time.time()
+        if urlparse(self.path).path != '/prompt':
+            return self.reply(404)
+        length = min(int(self.headers.get('Content-Length', 0) or 0), 65536)
+        try:
+            data = json.loads(self.rfile.read(length))
+            key = (str(data['session']), str(data['token']))
+            text = str(data['text'])[:4000]
+        except Exception:
+            return self.reply(400)
+        with helper.lock:
+            if key in helper.queues or len(helper.queues) < 100:
+                helper.queues.setdefault(key, []).append(text)
+        self.reply(204)
+
+
+def serve(arguments):
+    root = os.path.abspath(os.path.expanduser(arguments.root))
+    helper = Helper(root, arguments.port)
+
+    def watch():
+        while True:
+            time.sleep(60)
+            if time.time() - helper.last_seen > IDLE_SECONDS:
+                helper.shutdown()
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
+    try:
+        helper.serve_forever()
+    finally:
+        helper.server_close()
+        pid_file = os.path.join(root, 'helper.pid')
+        try:
+            with open(pid_file) as handle:
+                if handle.read().strip() == str(os.getpid()):
+                    os.remove(pid_file)
+        except OSError:
+            pass
+
+
+def ping(port):
+    try:
+        with urlopen('http://127.0.0.1:{}/ping'.format(port), timeout=1) as response:
+            return response.read().decode('utf-8', 'replace')
+    except Exception:
+        return None
+
+
+def version_number(version):
+    match = re.search(r'(\d+)$', version or '')
+
+    return int(match.group(1)) if match else 0
+
+
+def ensure(arguments):
+    """
+    Makes sure this version of the helper listens on the port: keeps one of this version or
+    newer (a newer one serves everything an older page needs), replaces an older one, or
+    starts one, fully detached so it outlives this command.
+    """
+    root = os.path.abspath(os.path.expanduser(arguments.root))
+    os.makedirs(root, exist_ok=True)
+    running = ping(arguments.port)
+    is_ours = running is not None and running.startswith('gitgraph-server-')
+    if is_ours and version_number(running) >= version_number(VERSION):
+        return {'isUp': True}
+    if running is not None and not is_ours:
+        return {'isUp': False}
+    if is_ours:
+        try:
+            urlopen('http://127.0.0.1:{}/quit'.format(arguments.port), timeout=1).close()
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+    process = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), 'serve', '--root', root, '--port', str(arguments.port)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True, close_fds=True,
+    )
+    with open(os.path.join(root, 'helper.pid'), 'w') as handle:
+        handle.write(str(process.pid))
+    for _ in range(40):
+        if ping(arguments.port) == VERSION:
+            return {'isUp': True}
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+
+    return {'isUp': False}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='gitgraph.py', description='The whole Git history as one page.')
+    commands = parser.add_subparsers(dest='command')
+    commands.required = True
+    for name in ('ensure', 'serve'):
+        command = commands.add_parser(name)
+        command.add_argument('--root', required=True)
+        command.add_argument('--port', type=int, required=True)
+    command = commands.add_parser('build')
+    command.add_argument('--repo', required=True)
+    command.add_argument('--submodule')
+    command.add_argument('--out', required=True)
+    command.add_argument('--prompt')
+    command.add_argument('--rerun', default='the gitgraph skill', help='What the page tells the person to run to refresh it.')
+    arguments = parser.parse_args(argv)
+
+    if arguments.command == 'serve':
+        serve(arguments)
+        return 0
+    try:
+        result = ensure(arguments) if arguments.command == 'ensure' else build(arguments)
+    except Failure as failure:
+        print(json.dumps({'error': str(failure)}))
+        return 1
+    except (OSError, subprocess.SubprocessError) as error:
+        print(json.dumps({'error': 'gitgraph could not run git: {}'.format(error)}))
+        return 1
+    print(json.dumps(result))
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

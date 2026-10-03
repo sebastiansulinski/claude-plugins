@@ -1,43 +1,12 @@
-export type GraphRef = { label: string; kind: 'head' | 'branch' | 'tag' | 'remote' }
+/** What `gitgraph.py ensure` prints: whether the helper listens on the port. */
+export type EnsureResult = { isUp: boolean }
 
-export type GraphCommit = {
-  row: number
-  lane: number
-  fullHash: string
-  hash: string
-  refs: GraphRef[]
-  branches: string[]
-  remotes: string[]
-  tags: string[]
-  headBranch: string | null
-  isHead: boolean
-  parentHashes: string[]
-  author: string
-  authorEmail: string
-  committer: string
-  committerEmail: string
-  isCommittedByOther: boolean
-  time: number
-  commitTime: number
-  subject: string
-  body: string
-  stats: { files: number; insertions: number; deletions: number }
-}
-
-export type GraphEdge = {
-  childRow: number
-  childLane: number
-  lane: number
-  parentRow: number
-  parentLane: number
-}
-
-export type GitGraph = {
+/** What `gitgraph.py build` prints: the page written and what it holds. */
+export type BuildResult = {
+  file: string
+  key: string
   repository: string
-  path: string
-  commits: GraphCommit[]
-  edges: GraphEdge[]
-  lanes: number
+  commits: number
   isTruncated: boolean
 }
 

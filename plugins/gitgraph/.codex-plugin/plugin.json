@@ -1,0 +1,24 @@
+{
+  "name": "gitgraph",
+  "version": "1.0.0",
+  "description": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
+  "author": {
+    "name": "Sebastian Sulinski",
+    "email": "seb@sulinski.me"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Gitgraph",
+    "shortDescription": "Git history as a page",
+    "longDescription": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
+    "developerName": "Sebastian Sulinski",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Open the git graph of this repository.",
+      "Open the git graph of the flow submodule in the in-app browser."
+    ]
+  },
+  "repository": "https://github.com/sebastiansulinski/claude-plugins",
+  "homepage": "https://github.com/sebastiansulinski/claude-plugins#the-gitgraph-plugin"
+}

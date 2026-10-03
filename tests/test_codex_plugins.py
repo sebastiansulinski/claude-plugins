@@ -1,5 +1,6 @@
 """Distribution contracts: match Claude workflows and ship self-contained Codex packages."""
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -21,10 +22,11 @@ EXPECTED = {
     "dead-code": {"purge"},
     "worktree": {"create", "init", "list", "remove", "cleanup"},
     "explain": {"explain"},
+    "gitgraph": {"gitgraph"},
 }
-# Claude Code plugins with no Codex package yet. gitgraph is a function-hooks plugin: it runs in
-# Claude Code's plugin engine, which Codex does not have.
-CLAUDE_ONLY = {"gitgraph"}
+# Claude Code plugins that ship a function-hooks module instead of skills. Their Codex package is a
+# skill that runs the same runtime (gitgraph/runtime/gitgraph.py).
+CLAUDE_HOOK_PACKAGES = {"gitgraph"}
 
 
 class CodexPackagesTest(unittest.TestCase):
@@ -34,9 +36,8 @@ class CodexPackagesTest(unittest.TestCase):
         self.assertEqual(catalogue["name"], "sebastiansulinski-codex")
         self.assertEqual(
             [entry["name"] for entry in catalogue["plugins"]],
-            [entry["name"] for entry in original["plugins"] if entry["name"] not in CLAUDE_ONLY],
+            [entry["name"] for entry in original["plugins"]],
         )
-        self.assertTrue(CLAUDE_ONLY <= {entry["name"] for entry in original["plugins"]})
         self.assertEqual(set(EXPECTED), {entry["name"] for entry in catalogue["plugins"]})
         for entry in catalogue["plugins"]:
             self.assertEqual(entry["source"], {"source": "local", "path": f"./plugins/{entry['name']}"})
@@ -47,11 +48,12 @@ class CodexPackagesTest(unittest.TestCase):
     def test_all_commands_have_native_skill_entrypoints(self):
         for plugin, expected in EXPECTED.items():
             with self.subTest(plugin=plugin):
-                claude_skills = list((ROOT / plugin / "skills").glob("*/SKILL.md"))
-                for path in claude_skills:
-                    self.assertEqual(yaml.safe_load(path.read_text().split("---", 2)[1])["name"], path.parent.name)
-                entrypoints = {path.stem for path in (ROOT / plugin / "commands").glob("*.md")}
-                self.assertEqual(entrypoints | {path.parent.name for path in claude_skills}, expected)
+                if plugin not in CLAUDE_HOOK_PACKAGES:
+                    claude_skills = list((ROOT / plugin / "skills").glob("*/SKILL.md"))
+                    for path in claude_skills:
+                        self.assertEqual(yaml.safe_load(path.read_text().split("---", 2)[1])["name"], path.parent.name)
+                    entrypoints = {path.stem for path in (ROOT / plugin / "commands").glob("*.md")}
+                    self.assertEqual(entrypoints | {path.parent.name for path in claude_skills}, expected)
                 skills = list((ROOT / "plugins" / plugin / "skills").glob("*/SKILL.md"))
                 self.assertEqual({path.parent.name for path in skills}, expected)
                 for path in skills:
@@ -67,6 +69,8 @@ class CodexPackagesTest(unittest.TestCase):
 
     def test_claude_packages_use_the_skills_layout_only(self):
         for plugin, expected in EXPECTED.items():
+            if plugin in CLAUDE_HOOK_PACKAGES:
+                continue
             with self.subTest(plugin=plugin):
                 self.assertFalse((ROOT / plugin / "commands").exists(), f"{plugin} still has a commands/ directory")
                 skills = {path.parent.name for path in (ROOT / plugin / "skills").glob("*/SKILL.md")}
@@ -123,7 +127,7 @@ class CodexPackagesTest(unittest.TestCase):
                         self.assertEqual(bundle.read(member), source.read_bytes())
 
 
-class ClaudeOnlyPackagesTest(unittest.TestCase):
+class ClaudeHookPackagesTest(unittest.TestCase):
     def test_gitgraph_is_a_self_contained_function_hooks_plugin(self):
         package = ROOT / "gitgraph"
         manifest = json.loads((package / ".claude-plugin/plugin.json").read_text())
@@ -136,9 +140,26 @@ class ClaudeOnlyPackagesTest(unittest.TestCase):
             self.assertTrue((package / "hooks" / module).resolve().is_file(), module)
         self.assertFalse((package / "commands").exists())
         self.assertFalse((package / "skills").exists())
-        self.assertFalse((ROOT / "plugins" / "gitgraph").exists())
         for generated in ("tsconfig.json", ".claude-plugin/types"):
             self.assertFalse((package / generated).exists(), f"{generated} is written per machine by Claude Code")
+
+    def test_gitgraph_runtime_copies_match_the_canonical_runtime(self):
+        runtime = ROOT / "gitgraph/runtime/gitgraph.py"
+        module = (ROOT / "gitgraph/hooks/runtime.ts").read_text()
+        prefix = "export const RUNTIME_SOURCE = "
+        line = next(line for line in module.splitlines() if line.startswith(prefix))
+        self.assertEqual(json.loads(line[len(prefix):]), runtime.read_text())
+        packaged = ROOT / "plugins/gitgraph/scripts/gitgraph.py"
+        self.assertFalse(packaged.is_symlink())
+        self.assertEqual(packaged.read_bytes(), runtime.read_bytes())
+        self.assertTrue(os.access(packaged, os.X_OK))
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/sync-gitgraph.py"), "--check"], capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        skill = ROOT / "plugins/gitgraph/skills/gitgraph/SKILL.md"
+        links = re.findall(r"\]\(([^)]+)\)", skill.read_text())
+        self.assertIn("../../scripts/gitgraph.py", links)
 
 
 if __name__ == "__main__":

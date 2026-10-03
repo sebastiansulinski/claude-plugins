@@ -1,8 +1,7 @@
 # claude-plugins
 
 Sebastian Sulinski's personal plugins for Claude Code and Codex — the same
-workflows packaged natively for each host, in one repository. One plugin,
-[`gitgraph`](#the-gitgraph-plugin), is Claude Code only for now.
+workflows packaged natively for each host, in one repository.
 
 ## Codex
 
@@ -14,7 +13,7 @@ If Codex reports the old `sebastiansulinski` catalogue is already added, follow
 ```sh
 codex plugin marketplace add sebastiansulinski/claude-plugins
 
-for plugin in review session repo release requirements db dead-code worktree explain; do
+for plugin in review session repo release requirements db dead-code worktree explain gitgraph; do
     codex plugin add "$plugin@sebastiansulinski-codex"
 done
 ```
@@ -33,10 +32,12 @@ picker, mention its qualified name, or ask for the corresponding workflow:
 | dead-code | `dead-code:purge` |
 | worktree | `worktree:create`, `worktree:init`, `worktree:list`, `worktree:remove`, `worktree:cleanup` |
 | explain | `explain:explain` |
+| gitgraph | `gitgraph:gitgraph` |
 
 For example: “Use `session:good-morning` to resume this project”,
 “Use `review:plan-review` on `docs/plans/example.md`”, or
-“Use `explain:explain` to explain the last result for a non-technical reader.”
+“Use `explain:explain` to explain the last result for a non-technical reader.”, or
+“Open the git graph of the flow submodule in the in-app browser.”
 
 The Codex packages live under `plugins/<name>/`; each has a
 `.codex-plugin/plugin.json` manifest and `skills/<name>/SKILL.md` entry points.
@@ -115,10 +116,17 @@ Run the package contracts and existing shell harness:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -B -m unittest discover -s tests -p 'test_codex_*.py' -v
+.venv/bin/python -B -m unittest discover -s tests -p 'test_*.py' -v
 bash worktree/tests/run.sh
 python3 scripts/sync-codex-worktree.py --check
+python3 scripts/sync-gitgraph.py --check
 ```
+
+The gitgraph page tests open the page in headless Google Chrome or Chromium (set
+`GITGRAPH_TEST_CHROME` to its path when it is elsewhere) and are skipped without one.
+The gitgraph runtime is canonical at `gitgraph/runtime/gitgraph.py`; after changing it,
+run `python3 scripts/sync-gitgraph.py` to regenerate the Claude plugin's
+`hooks/runtime.ts` and the Codex package's copy.
 
 The worktree runtime remains canonical at `worktree/scripts/worktree.sh`. After a
 deliberate engine change, run `python3 scripts/sync-codex-worktree.py` to update its
@@ -214,7 +222,7 @@ claude-plugins/
 ├── dead-code/
 ├── worktree/                         # also ships scripts/ and tests/
 ├── explain/
-└── gitgraph/                         # a function-hooks plugin: hooks/ and types/, no skills/
+└── gitgraph/                         # a function-hooks plugin: hooks/, types/ and runtime/, no skills/
 ```
 
 Each plugin is a self-contained directory with a `.claude-plugin/plugin.json`
@@ -222,14 +230,17 @@ manifest, a `skills/` directory holding one `<command>/SKILL.md` per command
 (its `name` frontmatter matches the folder), and optionally `agents/`. The
 contract tests require this layout: no plugin ships a `commands/` directory.
 The exception is `gitgraph`, which ships code instead of instructions: a
-`hooks/hooks.json` naming the TypeScript module Claude Code's plugin engine runs.
+`hooks/hooks.json` naming the TypeScript module Claude Code's plugin engine runs, and the
+Python runtime it shares with the Codex package.
 To add a new plugin, create the directory and register it in
 `.claude-plugin/marketplace.json`.
 
 ## The `gitgraph` plugin
 
-`/gitgraph` opens the whole history of the current repository as a page in your browser. It is
-written for Claude Code's plugin engine, so there is no Codex version yet.
+`/gitgraph` opens the whole history of the current repository as a page in your browser. In
+Codex, ask for it in words or pick the `gitgraph:gitgraph` skill; both build the same page with
+the same Python runtime, so they need Python 3 (on macOS it comes with the command line tools,
+`xcode-select --install`).
 
 ```
 /gitgraph                  # the repository you are in, in your default browser
@@ -247,8 +258,8 @@ written for Claude Code's plugin engine, so there is no Codex version yet.
   committer with email addresses, dates, refs, and change counts. The Changes tab shows each
   changed file and its diff, one card per changed section.
 - **Copying:** click a hash to copy it. Copy the message as text, or as Markdown that pastes into
-  Slack as a code block. Right-click a commit or a ref to copy, or to add it to Claude Code's
-  prompt box. Nothing is ever sent.
+  Slack as a code block. Right-click a commit or a ref to copy it. In Claude Code you can also add
+  it to the prompt box; nothing is ever sent.
 
 Dark mode is the default; the button at the top right switches to light. Panel sizes and the
 theme are remembered per browser.
@@ -257,8 +268,15 @@ theme are remembered per browser.
 Python helper on `127.0.0.1:47321`. The helper reads diffs and file matches with `git` on demand,
 and passes "add to prompt" requests to the session that opened the page. Each page carries a
 one-off code, so only that session receives them. The helper stops after 30 idle minutes, and the
-next `/gitgraph` starts it again. Without Python 3 the page still opens from disk, without the
-Changes tab, file search, or add-to-prompt.
+next `/gitgraph` starts it again. A page opened from disk (when the helper could not start)
+shows the history and copying, without the Changes tab, file search, or add-to-prompt.
+
+**In Codex** the skill builds the page into `/tmp/gitgraph` and serves it from its own helper on
+`127.0.0.1:47322`, so it never touches Claude Code's. Codex's sandbox does not let a command listen
+on a port or open a browser, so the skill asks to run those two steps outside it; decline and the
+page opens from disk. Ask for "the in-app browser" to see it inside Codex, which needs the helper.
+Each use costs a model turn: Codex skills always run through the model. `/tmp/gitgraph` is cleared
+on reboot; running the skill again rebuilds it.
 
 **`-i` costs one model turn.** A plugin cannot drive the built-in browser in auto mode, so `-i`
 asks the model to open the page. The request appears in the conversation, and it waits if the
