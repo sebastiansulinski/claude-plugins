@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-10-03
+
+### Added
+
+- **`gitgraph` plugin (Claude Code only).** `/gitgraph` opens the whole commit history of the
+  repository, or of a submodule (`/gitgraph flow`), as a page in your browser; `-i` (`--internal`)
+  opens it in the Claude desktop app's built-in browser instead. The page shows every commit in one
+  scroll with a colour per line of development, and a sidebar of branches, remotes, and tags as
+  folder trees: clicking one jumps to it and dims everything outside its history, right-clicking
+  copies its full name or adds it to the prompt. Find lists matching commits by subject, author,
+  hash, or ref, or (Files mode) the commits that changed a file whose path contains the text. A
+  details drawer shows the full message, people, dates, refs, and change counts, and a Changes tab
+  with each changed file's diff, one card per changed section; the arrow keys move through commits.
+  Messages copy as text or as Markdown that pastes into Slack as a code block. Dark by default,
+  with a light mode switch.
+- `gitgraph` is the repository's first function-hooks plugin: Claude Code's plugin engine runs its
+  TypeScript module, and a small Python helper on `127.0.0.1:47321` serves pages, reads diffs and
+  file matches with `git`, and passes add-to-prompt requests to the session that opened the page.
+  A Codex version is planned; until then a contract test lists `gitgraph` as the one Claude-only
+  plugin and checks its package is self-contained.
+
 ## [1.7.0] - 2026-09-25
 
 ### Added
