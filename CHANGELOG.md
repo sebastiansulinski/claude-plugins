@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-10-04
+
+### Added
+
+- **`gitgraph` file suggestions** (Claude Code 1.3.0, Codex 1.2.0). In Files mode, a list of the
+  matching file paths, written out in full, opens under the find box as you type: newest first, with
+  how many commits changed each, and "not in HEAD" for files since deleted or renamed. Picking one
+  (click, or the arrow keys and Enter) keeps only the commits that changed exactly that file, on
+  either side of a rename; typing again goes back to matching by text, and Escape closes the list.
+
+### Fixed
+
+- File search reads file names exactly as they are: names with quotes, backslashes, tabs or new
+  lines were quoted by git and so never matched. It also leaves out the stash, as the page does.
+- A file search answer that arrives late no longer undoes what you did since: clearing the box,
+  switching mode, closing the list or picking a file.
+- Requests arriving together on an expired cache now share one read of the history instead of each
+  reading it (the helper, now `gitgraph-server-5`, locks the cache per repository).
+
 ## [1.10.0] - 2026-10-04
 
 ### Changed
