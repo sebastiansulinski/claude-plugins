@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-10-04
+
+### Changed
+
+- **`gitgraph` find keeps the whole history in view** (Claude Code 1.2.0, Codex 1.1.0). Instead of
+  replacing the graph with a list of matches, find keeps every commit in place: matches stay at
+  full strength and the rest fade back, the same way a branch picked in the sidebar does, and the
+  two combine. Files mode shows the matching paths on each matching row. Enter and the arrow keys
+  step from match to match; clicking a faded commit still opens its details.
+
 ## [1.9.0] - 2026-10-03
 
 ### Added
