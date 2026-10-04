@@ -212,11 +212,110 @@ class HistoryTest(Fixture):
         self.assertEqual(first["files"][0]["added"], 20)
         self.assertTrue(first["files"][0]["hunks"].startswith("@@ -0,0 +1,20 @@\n+line 0"))
 
-        matches = self.runtime.touching({}, "project", str(repository), "OLD")["matches"]
+        history, _ = self.runtime.read_history(str(repository))
+        matches = self.runtime.touching(history, "OLD")["matches"]
         self.assertEqual(matches, {
             commits["Add old"]: ["old.txt"],
             commits["Rename old to new"]: ["old.txt"],
         })
+
+
+class FilePathsTest(Fixture):
+    """The helper's list of file paths, and its filter by one exact path, read file names literally."""
+
+    NAMES = ('a"b.txt', "back\\slash.txt", "tab\tname.txt", "new\nline.txt")
+
+    def unusual(self):
+        """Adds four awkward names; renames the quoted one; deletes the tab one; changes the backslash one."""
+        repository = self.workspace / "names"
+        repository.mkdir()
+        self.git(repository, "init", "-q", "-b", "main")
+        for name in self.NAMES:
+            (repository / name).write_text(name + "\n")
+        self.git(repository, "add", ".")
+        self.git(repository, "commit", "-qm", "Add awkward names")
+        self.git(repository, "mv", 'a"b.txt', 'c"d.txt')
+        self.git(repository, "commit", "-qm", "Rename the quoted name")
+        self.git(repository, "rm", "-q", "tab\tname.txt")
+        self.git(repository, "commit", "-qm", "Delete the tab name")
+        (repository / "back\\slash.txt").write_text("changed\n")
+        self.git(repository, "commit", "-qam", "Change the backslash name")
+        hashes = dict(line.split(" ", 1)[::-1] for line in self.git(repository, "log", "--format=%H %s").splitlines())
+        return repository, hashes
+
+    def test_paths_are_listed_literally_newest_first(self):
+        """A rename lists its new name before its old one."""
+        repository, _ = self.unusual()
+        history, at_head = self.runtime.read_history(str(repository))
+        self.assertEqual(at_head, {'c"d.txt', "back\\slash.txt", "new\nline.txt"})
+        listed = self.runtime.list_paths(history, at_head, ".TXT")
+        self.assertEqual(listed["total"], 5)
+        self.assertEqual(listed["paths"], [
+            {"path": "back\\slash.txt", "commits": 2, "isInHead": True},
+            {"path": "tab\tname.txt", "commits": 2, "isInHead": False},
+            {"path": 'c"d.txt', "commits": 1, "isInHead": True},
+            {"path": 'a"b.txt', "commits": 2, "isInHead": False},
+            {"path": "new\nline.txt", "commits": 1, "isInHead": True},
+        ])
+        self.assertEqual([entry["path"] for entry in self.runtime.list_paths(history, at_head, "\n")["paths"]],
+                         ["new\nline.txt"])
+
+    def test_exact_path_catches_both_sides_of_a_rename(self):
+        repository, hashes = self.unusual()
+        history, _ = self.runtime.read_history(str(repository))
+        self.assertEqual(self.runtime.touching(history, exact='a"b.txt')["matches"], {
+            hashes["Rename the quoted name"]: ['a"b.txt'],
+            hashes["Add awkward names"]: ['a"b.txt'],
+        })
+        self.assertEqual(self.runtime.touching(history, exact='c"d.txt')["matches"],
+                         {hashes["Rename the quoted name"]: ['c"d.txt']})
+        self.assertEqual(self.runtime.touching(history, exact="b.txt")["matches"], {})
+        self.assertEqual(self.runtime.touching(history, "TAB\t")["matches"], {
+            hashes["Delete the tab name"]: ["tab\tname.txt"],
+            hashes["Add awkward names"]: ["tab\tname.txt"],
+        })
+
+    def test_the_list_is_capped_at_fifty_and_ignores_the_stash(self):
+        repository = self.history()
+        for number in range(60):
+            (repository / f"many-{number:02}.txt").write_text("x\n")
+        self.git(repository, "add", ".")
+        self.git(repository, "commit", "-qm", "Add many")
+        history, at_head = self.runtime.read_history(str(repository))
+        listed = self.runtime.list_paths(history, at_head, "many-")
+        self.assertEqual((len(listed["paths"]), listed["total"]), (50, 60))
+        new = self.runtime.list_paths(history, at_head, "new.txt")["paths"]
+        self.assertEqual(new, [{"path": "new.txt", "commits": 1, "isInHead": True}], "the stash changed new.txt too")
+
+    def test_concurrent_requests_share_one_history_read(self):
+        repository = self.history()
+        helper = self.runtime.Helper(str(self.workspace), 0)
+        self.addCleanup(helper.server_close)
+        original = self.runtime.read_history
+        reads = []
+
+        def slow_read(path):
+            reads.append(path)
+            time.sleep(0.3)
+            return original(path)
+
+        self.runtime.read_history = slow_read
+        self.addCleanup(setattr, self.runtime, "read_history", original)
+        answers = []
+        workers = [
+            threading.Thread(target=lambda: answers.append(self.runtime.load_history(helper, "project", str(repository))))
+            for _ in range(6)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(answers), 6)
+        self.assertTrue(all(answer == answers[0] for answer in answers))
+        helper.histories["project"].read_at -= self.runtime.HISTORY_SECONDS + 1
+        self.runtime.load_history(helper, "project", str(repository))
+        self.assertEqual(len(reads), 2, "an expired history is read again")
 
 
 class LimitTest(Fixture):
@@ -264,6 +363,12 @@ class HelperTest(Fixture):
         with urlopen(f"{base}/touching?repo={built['key']}&q=feature") as response:
             matches = json.loads(response.read())["matches"]
         self.assertEqual(matches, {head: ["feature.txt"], self.git(repository, "rev-parse", "feature"): ["feature.txt"]})
+        with urlopen(f"{base}/touching?repo={built['key']}&path=old.txt") as response:
+            self.assertEqual(len(json.loads(response.read())["matches"]), 2)
+        with urlopen(f"{base}/paths?repo={built['key']}&q=TXT") as response:
+            listed = json.loads(response.read())
+        self.assertEqual([entry["path"] for entry in listed["paths"]], ["feature.txt", "new.txt", "old.txt"])
+        self.assertEqual(listed["paths"][2]["isInHead"], False)
 
         posted = Request(f"{base}/prompt", data=json.dumps({"session": "S", "token": "T", "text": "abc"}).encode())
         with urlopen(posted) as response:

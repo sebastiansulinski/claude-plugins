@@ -256,6 +256,10 @@ the same Python runtime, so they need Python 3 (on macOS it comes with the comma
   fade back, as with a branch picked in the sidebar. Commits mode matches subject, author, hash, or
   refs; Files mode matches the commits that changed a file whose path contains the text, and shows
   that path on the row. Enter, or the arrow keys, step through the matches.
+- **File suggestions:** in Files mode a list of the matching paths, written out in full, opens under
+  the box as you type, newest first, with how many commits changed each and "not in HEAD" for files
+  since deleted or renamed. Pick one (click, or the arrow keys and Enter) to keep only the commits
+  that changed exactly that file; type again to go back to matching by text. Escape closes the list.
 - **Details:** click a commit, or move with the arrow keys, for its full message, author and
   committer with email addresses, dates, refs, and change counts. The Changes tab shows each
   changed file and its diff, one card per changed section.

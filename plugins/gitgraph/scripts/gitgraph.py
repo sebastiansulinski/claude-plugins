@@ -34,7 +34,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
 
-VERSION = 'gitgraph-server-4'
+VERSION = 'gitgraph-server-5'
 LIMIT = 20000
 PALETTE = ['#a855f7', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6', '#ef4444', '#84cc16']
 
@@ -318,6 +318,16 @@ header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:
 header strong{font-size:14px}header span{color:var(--dim)}
 header .find{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
 header .box{position:relative}
+#suggest{position:absolute;top:calc(100% + 4px);right:0;width:max(100%,560px);max-height:360px;overflow:auto;background:var(--menu);border:1px solid var(--edge);border-radius:4px;box-shadow:0 8px 24px #0006;z-index:20;padding:4px 0}
+#suggest[hidden]{display:none}
+#suggest .o{display:flex;align-items:center;gap:10px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+#suggest .o:hover{background:var(--hover)}
+#suggest .o.on{background:var(--sel)}
+#suggest .path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+#suggest .path b{color:var(--fg);font-weight:700}
+#suggest .m{flex:none;color:var(--dim);font-size:11.5px}
+#suggest .gone{flex:none;color:var(--dim);font-size:11px;border:1px solid var(--edge);border-radius:4px;padding:0 5px}
+#suggest .more{padding:6px 10px 4px;margin-top:4px;border-top:1px solid var(--line);color:var(--dim);font-size:11.5px}
 header .modes{display:flex;height:30px;border:1px solid var(--edge);border-radius:4px;overflow:hidden;background:var(--bg)}
 header .modes button{height:100%;font:12px ui-sans-serif,system-ui,sans-serif;color:var(--dim);background:transparent;border:0;padding:0 12px;cursor:pointer}
 header .modes button+button{border-left:1px solid var(--edge)}
@@ -983,6 +993,12 @@ SCRIPT = r'''
   var find = document.getElementById('find'), counter = document.getElementById('count');
   var modes = document.getElementById('modes'), mode = 'commits';
   var fileMatches = {}, fileTimer = null, fileQuery = 0, filterHits = [], filterAt = -1, filterKind = null;
+  // Files mode also lists the matching paths under the box (the helper's /paths); picking one
+  // filters to that exact file. Each change to what is asked (typing, clearing, switching
+  // mode, picking) takes a new number, and an answer is used only while its number is
+  // current, so a late answer never reopens a closed list or replaces a picked file's results.
+  var suggest = document.getElementById('suggest'), listQuery = 0, suggestions = [], suggestAt = -1;
+  var picked = null, isListDismissed = false;
   // The helper's features switch on once it answers; opened from disk, the page never asks.
   var filesButton = modes.querySelector('[data-mode="files"]'), filesTitle = filesButton.title;
   filesButton.disabled = true;
@@ -1041,14 +1057,70 @@ SCRIPT = r'''
     });
     showFiltered('commits', hits, null);
   }
+  function closeList() {
+    suggest.hidden = true;
+    suggest.innerHTML = '';
+    suggestions = [];
+    suggestAt = -1;
+  }
+  function dismissList() {
+    isListDismissed = true;
+    ++listQuery;
+    closeList();
+  }
+  function loadList(needle, number) {
+    fetch('/paths?repo=' + encodeURIComponent(REPO) + '&q=' + encodeURIComponent(needle))
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        if (!data || data.error || number !== listQuery || mode !== 'files' || isListDismissed || picked !== null) return;
+        if (!data.paths.length) return closeList();
+        suggestions = data.paths;
+        suggestAt = -1;
+        var lowered = needle.toLowerCase();
+        suggest.innerHTML = data.paths.map(function (entry, index) {
+          var at = entry.path.toLowerCase().indexOf(lowered), path = entry.path;
+          var shown = at < 0 ? esc(path) : esc(path.slice(0, at)) + '<b>' + esc(path.slice(at, at + needle.length)) + '</b>' + esc(path.slice(at + needle.length));
+          return '<div class="o" data-index="' + index + '" title="' + esc(path) + '"><span class="path">' + shown + '</span>' +
+            (entry.isInHead ? '' : '<span class="gone">not in HEAD</span>') +
+            '<span class="m">' + entry.commits + (entry.commits === 1 ? ' commit' : ' commits') + '</span></div>';
+        }).join('') + (data.total > data.paths.length
+          ? '<div class="more">' + data.paths.length + ' of ' + data.total + ' paths: keep typing to narrow them</div>' : '');
+        suggest.hidden = false;
+        suggest.scrollTop = 0;
+      }, function () {});
+  }
+  function markSuggestion(index) {
+    suggestAt = index;
+    suggest.querySelectorAll('.o').forEach(function (el, at) { el.classList.toggle('on', at === index); });
+    var on = suggest.querySelector('.o.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  }
+  // Picking a path: the box holds it in full and the graph keeps only the commits that
+  // changed exactly that file (either side of a rename). Typing again searches by text.
+  function pickPath(index) {
+    picked = suggestions[index].path;
+    find.value = picked;
+    dismissList();
+    findFiles();
+  }
+  suggest.addEventListener('mousedown', function (e) {
+    var option = e.target.closest('.o');
+    e.preventDefault();
+    if (option) pickPath(Number(option.getAttribute('data-index')));
+  });
+  document.addEventListener('mousedown', function (e) {
+    if (!suggest.hidden && !(e.target.closest && e.target.closest('header .box'))) dismissList();
+  });
   function findFiles() {
-    var needle = find.value.trim();
+    var needle = picked !== null ? picked : find.value.trim();
     clearTimeout(fileTimer);
-    if (!needle) { clearFilter(); setCount(''); return; }
+    var ticket = ++fileQuery, number = ++listQuery;
+    if (!needle) { closeList(); clearFilter(); setCount(''); return; }
     setCount('…');
-    var ticket = ++fileQuery;
+    var asked = picked !== null ? '&path=' + encodeURIComponent(picked) : '&q=' + encodeURIComponent(needle);
     fileTimer = setTimeout(function () {
-      fetch('/touching?repo=' + encodeURIComponent(REPO) + '&q=' + encodeURIComponent(needle))
+      if (picked === null && !isListDismissed) loadList(needle, number);
+      fetch('/touching?repo=' + encodeURIComponent(REPO) + asked)
         .then(function (response) {
           if (response.status === 404) throw new Error('outdated');
           return response.json();
@@ -1068,7 +1140,7 @@ SCRIPT = r'''
             ? 'The gitgraph helper running now is older than this page. Run ' + RERUN + ' again to update it.'
             : 'The gitgraph helper did not answer. Run ' + RERUN + ' again to restart it.', 6000);
         });
-    }, 220);
+    }, picked !== null ? 0 : 220);
   }
   function runFind() { if (mode === 'files') findFiles(); else findCommits(); }
   modes.addEventListener('click', function (e) {
@@ -1077,11 +1149,20 @@ SCRIPT = r'''
     mode = button.getAttribute('data-mode');
     modes.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === button); });
     find.placeholder = mode === 'files' ? 'Find files: part of a path or file name' : 'Find commits: subject, author, hash or ref';
+    ++fileQuery;
+    ++listQuery;
+    picked = null;
+    isListDismissed = false;
+    closeList();
     clearFilter();
     runFind();
     find.focus();
   });
-  find.addEventListener('input', runFind);
+  find.addEventListener('input', function () {
+    picked = null;
+    isListDismissed = false;
+    runFind();
+  });
   // Moves to a filtered result: selects it and opens its details, on Changes at the
   // matching file when the filter is by file.
   function stepFiltered(index) {
@@ -1091,9 +1172,28 @@ SCRIPT = r'''
     openCommit(c, filterKind === 'files');
     setCount((index + 1) + ' / ' + filterHits.length);
   }
-  // Enter / Shift+Enter (or the arrow keys) step through the results.
+  // While the list of paths is open, the arrow keys and Enter choose from it and Escape closes
+  // it. Otherwise Enter / Shift+Enter (or the arrow keys) step through the results, and
+  // Escape clears the box.
   find.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && find.value) { find.value = ''; runFind(); return; }
+    if (!suggest.hidden) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        var next = suggestAt + (e.key === 'ArrowDown' ? 1 : -1);
+        return markSuggestion(Math.max(0, Math.min(suggestions.length - 1, next)));
+      }
+      if (e.key === 'Enter' && suggestAt >= 0) { e.preventDefault(); return pickPath(suggestAt); }
+      // Escape closes the list alone, leaving the details panel open.
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return dismissList(); }
+      if (e.key === 'Enter') dismissList();
+    }
+    if (e.key === 'Escape' && find.value) {
+      find.value = '';
+      picked = null;
+      isListDismissed = false;
+      runFind();
+      return;
+    }
     var step = e.key === 'Enter' ? (e.shiftKey ? -1 : 1) : e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!step || !filterHits.length) return;
     e.preventDefault();
@@ -1186,7 +1286,7 @@ def build_page(graph, generated_at, repo, prompt, rerun):
         '<button data-mode="commits" class="on" title="Find commits by subject, author, hash or ref">Commits</button>'
         '<button data-mode="files" title="Show only the commits that changed a file whose path contains the text">Files</button></div>'
         '<div class="box"><input id="find" placeholder="Find commits: subject, author, hash or ref" autocomplete="off">'
-        '<span class="count" id="count"></span></div></div>'
+        '<span class="count" id="count"></span><div id="suggest" hidden></div></div></div>'
         '<button class="mode" id="mode" title="Switch between dark and light">' + SUN + MOON + '</button></header>'
         '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">'
         '<div id="list"></div><div id="detail" hidden></div></div></div>'
@@ -1313,30 +1413,102 @@ def changes(path, commit):
     return {'isMerge': len(parents) > 2, 'isRoot': len(parents) == 1, 'files': files}
 
 
-def touching(cache, key, path, needle):
-    """The commits whose changed paths (either side of a rename; a merge against its first parent) contain `needle`."""
-    cached = cache.get(key)
-    if not cached or time.time() - cached[0] > 30:
-        output = helper_git(path, 'log', '--all', '--diff-merges=first-parent', '--name-status', '-M', '--format=%x1e%H')
-        commits = []
-        for record in output.split('\x1e')[1:]:
-            lines = record.split('\n')
-            paths = []
-            for line in lines[1:]:
-                parts = line.split('\t')
-                if len(parts) > 1:
-                    paths.extend(parts[1:])
-            commits.append((lines[0].strip(), paths))
-        cached = (time.time(), commits)
-        cache[key] = cached
-    needle = needle.lower()
+HISTORY_SECONDS = 30
+PATHS_LIMIT = 50
+
+
+class History:
+    """One repository's changed paths per commit, and the paths at HEAD, shared by /touching and /paths."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.read_at = 0
+        self.commits = []
+        self.at_head = frozenset()
+
+
+def read_history(path):
+    """
+    Every commit's changed paths (a merge against its first parent; a rename's new name, then its
+    old one), newest first, leaving out the stash as the page does; and the paths at HEAD. Git
+    separates both with NUL characters, so every file name arrives exactly as it is.
+    """
+    output = helper_git(path, 'log', '-z', '--exclude=refs/stash', '--all', '--diff-merges=first-parent',
+                        '--name-status', '-M', '--format=%x1e%H')
+    commits = []
+    for record in output.split('\x1e')[1:]:
+        tokens = record.split('\0')
+        paths = []
+        index = 1
+        while index < len(tokens):
+            code = tokens[index].lstrip('\n') if index == 1 else tokens[index]
+            if not code:
+                index += 1
+                continue
+            if code[0] in 'RC':
+                paths.extend([tokens[index + 2], tokens[index + 1]])
+                index += 3
+            else:
+                paths.append(tokens[index + 1])
+                index += 2
+        commits.append((tokens[0].strip(), paths))
+    listed = helper_git(path, 'ls-tree', '-r', '-z', '--name-only', 'HEAD')
+
+    return commits, frozenset(name for name in listed.split('\0') if name)
+
+
+def load_history(helper, key, path):
+    """
+    The repository's history, read at most once every HISTORY_SECONDS: a request that finds it
+    missing or expired reads it under the repository's lock, so requests arriving together share
+    one read.
+    """
+    with helper.lock:
+        history = helper.histories.setdefault(key, History())
+    with history.lock:
+        if not history.read_at or time.time() - history.read_at > HISTORY_SECONDS:
+            history.commits, history.at_head = read_history(path)
+            history.read_at = time.time()
+
+        return history.commits, history.at_head
+
+
+def touching(commits, needle=None, exact=None):
+    """The commits that changed a path containing `needle` (ignoring case), or the path `exact` itself."""
+    lowered = needle.lower() if needle is not None else None
     matches = {}
-    for commit, paths in cached[1]:
-        hits = [name for name in paths if needle in name.lower()]
+    for commit, paths in commits:
+        if exact is not None:
+            hits = [exact] if exact in paths else []
+        else:
+            hits = [name for name in paths if lowered in name.lower()]
         if hits:
             matches[commit] = hits[:20]
 
     return {'matches': matches}
+
+
+def list_paths(commits, at_head, needle):
+    """
+    The distinct paths containing `needle` (ignoring case), most recently changed first, at most
+    PATHS_LIMIT, each with how many commits changed it and whether it is at HEAD.
+    """
+    lowered = needle.lower()
+    order = []
+    counts = {}
+    for _, paths in commits:
+        for name in paths:
+            if name not in counts and lowered in name.lower():
+                order.append(name)
+                counts[name] = 0
+        for name in set(paths):
+            if name in counts:
+                counts[name] += 1
+
+    return {
+        'paths': [{'path': name, 'commits': counts[name], 'isInHead': name in at_head} for name in order[:PATHS_LIMIT]],
+        'total': len(order),
+    }
 
 
 class Helper(ThreadingMixIn, HTTPServer):
@@ -1348,7 +1520,7 @@ class Helper(ThreadingMixIn, HTTPServer):
         self.queues = {}
         self.lock = threading.Lock()
         self.last_seen = time.time()
-        self.touched = {}
+        self.histories = {}
 
     def registered(self, key):
         try:
@@ -1397,13 +1569,16 @@ class Handler(BaseHTTPRequestHandler):
             if not path or not HASH.match(commit):
                 return self.reply(404, b'{"error":"unknown repository or commit"}', 'application/json')
             return self.answer(lambda: changes(path, commit))
-        if url.path == '/touching':
+        if url.path in ('/touching', '/paths'):
             key = query.get('repo', [''])[0]
             path = helper.registered(key)
             needle = query.get('q', [''])[0]
-            if not path or not needle:
+            exact = query.get('path', [''])[0] if url.path == '/touching' else ''
+            if not path or not (needle or exact):
                 return self.reply(404, b'{"error":"unknown repository or empty search"}', 'application/json')
-            return self.answer(lambda: touching(helper.touched, key, path, needle))
+            if url.path == '/paths':
+                return self.answer(lambda: list_paths(*load_history(helper, key, path), needle))
+            return self.answer(lambda: touching(load_history(helper, key, path)[0], needle or None, exact or None))
         if url.path == '/inbox':
             key = (query.get('session', [''])[0], query.get('token', [''])[0])
             with helper.lock:

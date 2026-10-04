@@ -1,6 +1,6 @@
 {
   "name": "gitgraph",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
   "author": {
     "name": "Sebastian Sulinski",
