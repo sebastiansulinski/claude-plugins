@@ -252,8 +252,10 @@ the same Python runtime, so they need Python 3 (on macOS it comes with the comma
   each line of development in its own colour.
 - **Sidebar:** branches, remotes, and tags as folder trees. Click one to jump to its latest commit
   and dim everything outside its history; right-click to copy its full name or add it to the prompt.
-- **Find:** Commits mode lists the commits whose subject, author, hash, or refs contain the text.
-  Files mode lists the commits that changed a file whose path contains it.
+- **Find:** the whole history stays in view; matching commits stay at full strength and the rest
+  fade back, as with a branch picked in the sidebar. Commits mode matches subject, author, hash, or
+  refs; Files mode matches the commits that changed a file whose path contains the text, and shows
+  that path on the row. Enter, or the arrow keys, step through the matches.
 - **Details:** click a commit, or move with the arrow keys, for its full message, author and
   committer with email addresses, dates, refs, and change counts. The Changes tab shows each
   changed file and its diff, one card per changed section.

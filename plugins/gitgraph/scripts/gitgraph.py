@@ -310,8 +310,8 @@ nav>details>summary{font-size:11px;letter-spacing:.06em;text-transform:uppercase
 nav .leaf i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}
 nav .leaf.head{font-weight:700}
 nav .leaf.on{background:var(--sel)}
-#list .r.dim{opacity:.35}
-#list svg .dim{opacity:.2}
+#list .r.dim,#list .r.miss{opacity:.35}
+#list svg .dim,#list svg .miss{opacity:.2}
 nav .empty{padding:3px 22px;color:var(--dim)}
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--bar)}
@@ -324,12 +324,7 @@ header .modes button+button{border-left:1px solid var(--edge)}
 header .modes button:hover{color:var(--fg);background:var(--hover)}
 header .modes button.on{background:var(--on);color:var(--fg);font-weight:600}
 header .modes button:disabled{opacity:.4;cursor:default}
-#flist{flex:1;overflow:auto;padding:10px 0 14px}
-#flist[hidden]{display:none}
-.r.fr{position:static;padding-left:16px}
-.fr .dot{width:9px;height:9px;border-radius:50%;flex:none}
-.fr .paths{flex:0 1 auto;max-width:42%;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace}
-#flist .none{padding:16px;color:var(--dim)}
+.r .paths{flex:0 1 auto;max-width:34%;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace}
 header input{width:320px;height:30px;padding:0 10px;border-radius:4px;border:1px solid var(--edge);background:var(--bg);color:var(--fg);font:inherit}
 header input.has{padding-right:84px}
 header .count{position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:12px;pointer-events:none}
@@ -439,7 +434,6 @@ SCRIPT = r'''
   function canPrompt() { return HELPER && !!PROMPT; }
   var commits = DATA.commits, edges = DATA.edges;
   var list = document.getElementById('list');
-  var flist = document.getElementById('flist');
   var preferred = null;
   var menu = document.getElementById('menu');
   var toast = document.getElementById('toast');
@@ -516,6 +510,28 @@ SCRIPT = r'''
       '<span class="d">' + when(c.time) + '</span><span class="h" title="Click to copy">' + c.hash + '</span></div>';
   }).join('');
   list.innerHTML = '<div style="height:' + total + 'px;position:relative">' + svg + rows + '</div>';
+  var rowEls = [], dotEls = [], edgeEls = list.querySelectorAll('path');
+  list.querySelectorAll('.r').forEach(function (el) { rowEls[Number(el.getAttribute('data-row'))] = el; });
+  list.querySelectorAll('circle').forEach(function (el) { dotEls[Number(el.getAttribute('data-r'))] = el; });
+
+  // Fading: commits outside the history of a branch picked in the sidebar (dim), or outside
+  // the find box's matches (miss), fade back. The whole history always stays in place.
+  var focusReach = null, matched = null;
+  function paint() {
+    rowEls.forEach(function (el, row) {
+      el.classList.toggle('dim', !!focusReach && !focusReach[row]);
+      el.classList.toggle('miss', !!matched && !matched[row]);
+    });
+    dotEls.forEach(function (el, row) {
+      el.classList.toggle('dim', !!focusReach && !focusReach[row]);
+      el.classList.toggle('miss', !!matched && !matched[row]);
+    });
+    edgeEls.forEach(function (el) {
+      var child = el.getAttribute('data-c'), parent = el.getAttribute('data-p');
+      el.classList.toggle('dim', !!focusReach && (!focusReach[child] || (parent !== '-1' && !focusReach[parent])));
+      el.classList.toggle('miss', !!matched && (!matched[child] || parent === '-1' || !matched[parent]));
+    });
+  }
 
   // ---------------------------------------------------------------- sidebar
   function tree(names) {
@@ -575,31 +591,23 @@ SCRIPT = r'''
   var selected = null;
   function select(row) {
     if (selected) selected.classList.remove('sel');
-    if (!flist.hidden) {
-      selected = flist.querySelector('.r[data-row="' + row + '"]');
-      if (selected) {
-        selected.classList.add('sel');
-        selected.scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      // A commit outside the file filter: leave the filter and show it in the full graph.
-      clearFiles();
-      find.value = '';
-      setCount('');
-    }
-    selected = list.querySelector('.r[data-row="' + row + '"]');
+    selected = rowEls[row] || null;
     if (!selected) return;
     selected.classList.add('sel');
+    reveal(row);
+  }
+  // Scrolls a row into the middle of the graph when it is out of view.
+  function reveal(row) {
     var top = row * ROW + 10;
     if (top < list.scrollTop || top + ROW > list.scrollTop + list.clientHeight) {
       list.scrollTop = Math.max(0, top - list.clientHeight / 2 + ROW / 2);
     }
   }
-  function show(text) {
+  function show(text, duration) {
     toast.textContent = text;
     toast.hidden = false;
     clearTimeout(show.timer);
-    show.timer = setTimeout(function () { toast.hidden = true; }, 1400);
+    show.timer = setTimeout(function () { toast.hidden = true; }, duration || 1400);
   }
   function copy(text, label) {
     var done = function () { show('Copied ' + (label || text)); };
@@ -669,16 +677,8 @@ SCRIPT = r'''
         (parentsOf[row] || []).forEach(function (parent) { if (!reach[parent]) stack.push(parent); });
       }
     }
-    list.querySelectorAll('.r').forEach(function (el) {
-      el.classList.toggle('dim', !!reach && !reach[el.getAttribute('data-row')]);
-    });
-    list.querySelectorAll('circle').forEach(function (el) {
-      el.classList.toggle('dim', !!reach && !reach[el.getAttribute('data-r')]);
-    });
-    list.querySelectorAll('path').forEach(function (el) {
-      var child = el.getAttribute('data-c'), parent = el.getAttribute('data-p');
-      el.classList.toggle('dim', !!reach && (!reach[child] || (parent !== '-1' && !reach[parent])));
-    });
+    focusReach = reach;
+    paint();
   }
   document.getElementById('refs').addEventListener('click', function (e) {
     var leaf = e.target.closest('.leaf');
@@ -921,7 +921,7 @@ SCRIPT = r'''
     if (e.target.classList.contains('h')) { copy(c.hash); select(c.row); return; }
     select(c.row);
     if (shownRow === c.row) return closeDetail();
-    openCommit(c, row.classList.contains('fr') && flist.getAttribute('data-kind') === 'files');
+    openCommit(c, filterKind === 'files' && !!matched && !!matched[c.row]);
   }
   // Opens a commit's details. From the file filter they open straight onto Changes, at the
   // first file that matched.
@@ -932,27 +932,30 @@ SCRIPT = r'''
     openDetail(c);
   }
   list.addEventListener('click', onRowClick);
-  flist.addEventListener('click', onRowClick);
 
   // Keyboard: once a row has been clicked, the up and down arrows move to the previous or
-  // next row of the list in view (the graph, or the file filter's results), opening each
-  // one's details as they go, as stepping through the find box's results does. A click
+  // next commit, opening each one's details as they go; while the find box has matches,
+  // they move to the previous or next match, as stepping through its results does. A click
   // anywhere else (the details, the sidebar, the header) hands the arrows back.
   var isListActive = false;
   document.addEventListener('mousedown', function (e) {
-    isListActive = !!(e.target.closest && e.target.closest('#list, #flist'));
+    isListActive = !!(e.target.closest && e.target.closest('#list'));
   });
   document.addEventListener('keydown', function (e) {
     if (!isListActive || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || !selected) return;
     if (e.target.closest && e.target.closest('input, textarea')) return;
-    var step = e.key === 'ArrowDown' ? 1 : -1;
-    if (selected.classList.contains('fr')) {
-      var index = filterHits.indexOf(Number(selected.getAttribute('data-row'))) + step;
-      if (index < 0 || index >= filterHits.length) return;
+    var step = e.key === 'ArrowDown' ? 1 : -1, from = Number(selected.getAttribute('data-row'));
+    if (filterHits.length) {
+      var index = -1;
+      for (var at = 0; at < filterHits.length; at++) {
+        if (step > 0 && filterHits[at] > from) { index = at; break; }
+        if (step < 0 && filterHits[at] < from) index = at;
+      }
+      if (index < 0) return;
       e.preventDefault();
       return stepFiltered(index);
     }
-    var row = Number(selected.getAttribute('data-row')) + step;
+    var row = from + step;
     if (row < 0 || row >= commits.length) return;
     e.preventDefault();
     select(row);
@@ -972,14 +975,14 @@ SCRIPT = r'''
     openMenu(e, c.subject, items);
   }
   list.addEventListener('contextmenu', onRowMenu);
-  flist.addEventListener('contextmenu', onRowMenu);
 
-  // Find, in two modes, both listing only the matching commits in place of the graph.
-  // Commits: subject, author, hash or ref contain the text. Files: the commit changed a
-  // file whose path contains it (the bridge reads that with git), its matching paths shown.
+  // Find, in two modes, both keeping the matching commits at full strength and fading the
+  // rest back, so the whole history stays in view. Commits: subject, author, hash or ref
+  // contain the text. Files: the commit changed a file whose path contains it (the helper
+  // reads that with git), its matching paths shown on its row.
   var find = document.getElementById('find'), counter = document.getElementById('count');
   var modes = document.getElementById('modes'), mode = 'commits';
-  var fileMatches = {}, fileTimer = null, fileQuery = 0, filterHits = [], filterAt = -1;
+  var fileMatches = {}, fileTimer = null, fileQuery = 0, filterHits = [], filterAt = -1, filterKind = null;
   // The helper's features switch on once it answers; opened from disk, the page never asks.
   var filesButton = modes.querySelector('[data-mode="files"]'), filesTitle = filesButton.title;
   filesButton.disabled = true;
@@ -999,49 +1002,49 @@ SCRIPT = r'''
     counter.textContent = text;
     find.classList.toggle('has', !!text);
   }
-  function clearFiles() {
-    flist.hidden = true;
-    list.hidden = false;
-    flist.innerHTML = '';
-    flist.removeAttribute('data-kind');
+  function clearPaths() {
+    list.querySelectorAll('.r .paths').forEach(function (el) { el.remove(); });
+  }
+  function clearFilter() {
+    clearPaths();
+    matched = null;
+    filterKind = null;
     fileMatches = {};
     filterHits = [];
     filterAt = -1;
+    paint();
   }
-  function showFiltered(kind, hits, pathsOf, empty) {
+  function showFiltered(kind, hits, pathsOf) {
+    clearPaths();
+    filterKind = kind;
+    matched = {};
     filterHits = hits.map(function (c) { return c.row; });
     filterAt = -1;
-    flist.setAttribute('data-kind', kind);
-    flist.innerHTML = hits.length ? hits.map(function (c) {
-      var paths = pathsOf ? pathsOf(c) : null;
-      var shown = paths ? paths.slice(0, 2).join(', ') + (paths.length > 2 ? ' +' + (paths.length - 2) : '') : '';
-      var pills = paths ? '' : c.refs.map(function (r) {
-        return '<span class="p ' + r.kind + '" style="color:' + colour(c.lane) + '">' + esc(r.kind === 'tag' ? '⌂ ' + r.label : r.label) + '</span>';
-      }).join('');
-      return '<div class="r fr' + (c.isHead ? ' head' : '') + '" data-row="' + c.row + '">' +
-        '<i class="dot" style="background:' + colour(c.lane) + '"></i>' +
-        '<span class="s" title="' + esc(c.subject) + '">' + esc(c.subject) + '</span>' + pills +
-        (paths ? '<span class="paths" title="' + esc(paths.join('\n')) + '">' + esc(shown) + '</span>' : '') +
-        '<span class="a">' + esc(c.author) + (c.isCommittedByOther ? '*' : '') + '</span>' +
-        '<span class="d">' + when(c.time) + '</span><span class="h" title="Click to copy">' + c.hash + '</span></div>';
-    }).join('') : '<p class="none">' + empty + '</p>';
-    list.hidden = true;
-    flist.hidden = false;
-    flist.scrollTop = 0;
-    setCount(hits.length + (hits.length === 1 ? ' commit' : ' commits'));
+    hits.forEach(function (c) {
+      matched[c.row] = true;
+      if (!pathsOf) return;
+      var paths = pathsOf(c), span = document.createElement('span');
+      span.className = 'paths';
+      span.title = paths.join('\n');
+      span.textContent = paths.slice(0, 2).join(', ') + (paths.length > 2 ? ' +' + (paths.length - 2) : '');
+      rowEls[c.row].insertBefore(span, rowEls[c.row].querySelector('.a'));
+    });
+    paint();
+    setCount(hits.length ? hits.length + (hits.length === 1 ? ' commit' : ' commits') : 'no matches');
+    if (hits.length) reveal(hits[0].row);
   }
   function findCommits() {
     var needle = find.value.trim().toLowerCase();
-    if (!needle) { clearFiles(); setCount(''); return; }
+    if (!needle) { clearFilter(); setCount(''); return; }
     var hits = commits.filter(function (c) {
       return (c.subject + ' ' + c.author + ' ' + c.fullHash + ' ' + c.branches.join(' ') + ' ' + c.remotes.join(' ') + ' ' + c.tags.join(' ')).toLowerCase().indexOf(needle) >= 0;
     });
-    showFiltered('commits', hits, null, 'No commit matches “' + esc(find.value.trim()) + '”.');
+    showFiltered('commits', hits, null);
   }
   function findFiles() {
     var needle = find.value.trim();
     clearTimeout(fileTimer);
-    if (!needle) { clearFiles(); setCount(''); return; }
+    if (!needle) { clearFilter(); setCount(''); return; }
     setCount('…');
     var ticket = ++fileQuery;
     fileTimer = setTimeout(function () {
@@ -1055,17 +1058,15 @@ SCRIPT = r'''
           if (data.error) throw new Error(data.error);
           fileMatches = data.matches;
           var hits = commits.filter(function (c) { return fileMatches[c.fullHash]; });
-          showFiltered('files', hits, function (c) { return fileMatches[c.fullHash]; },
-            'No commit changed a file whose path contains “' + esc(needle) + '”.');
+          showFiltered('files', hits, function (c) { return fileMatches[c.fullHash]; });
         })
         .catch(function (error) {
           if (ticket !== fileQuery) return;
+          clearFilter();
           setCount('unavailable');
-          list.hidden = true;
-          flist.hidden = false;
-          flist.innerHTML = '<p class="none">' + (String(error.message) === 'outdated'
-            ? 'The gitgraph helper running now is older than this page. Run ' + esc(RERUN) + ' again to update it.'
-            : 'The gitgraph helper did not answer. Run ' + esc(RERUN) + ' again to restart it.') + '</p>';
+          show(String(error.message) === 'outdated'
+            ? 'The gitgraph helper running now is older than this page. Run ' + RERUN + ' again to update it.'
+            : 'The gitgraph helper did not answer. Run ' + RERUN + ' again to restart it.', 6000);
         });
     }, 220);
   }
@@ -1076,7 +1077,7 @@ SCRIPT = r'''
     mode = button.getAttribute('data-mode');
     modes.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === button); });
     find.placeholder = mode === 'files' ? 'Find files: part of a path or file name' : 'Find commits: subject, author, hash or ref';
-    clearFiles();
+    clearFilter();
     runFind();
     find.focus();
   });
@@ -1087,7 +1088,7 @@ SCRIPT = r'''
     filterAt = index;
     var c = commits[filterHits[index]];
     select(c.row);
-    openCommit(c, flist.getAttribute('data-kind') === 'files');
+    openCommit(c, filterKind === 'files');
     setCount((index + 1) + ' / ' + filterHits.length);
   }
   // Enter / Shift+Enter (or the arrow keys) step through the results.
@@ -1188,7 +1189,7 @@ def build_page(graph, generated_at, repo, prompt, rerun):
         '<span class="count" id="count"></span></div></div>'
         '<button class="mode" id="mode" title="Switch between dark and light">' + SUN + MOON + '</button></header>'
         '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">'
-        '<div id="list"></div><div id="flist" hidden></div><div id="detail" hidden></div></div></div>'
+        '<div id="list"></div><div id="detail" hidden></div></div></div>'
         '<div id="menu" hidden></div><div id="toast" hidden></div>'
         '<script>var DATA = ' + to_json({'commits': graph['commits'], 'edges': graph['edges']})
         + '; var PALETTE = ' + to_json(PALETTE) + '; var REPO = ' + to_json(repo)
