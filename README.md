@@ -273,16 +273,26 @@ theme are remembered per browser.
 **How it runs.** `/gitgraph` writes the page to `~/.claude/gitgraph/` and serves it from a small
 Python helper on `127.0.0.1:47321`. The helper reads diffs and file matches with `git` on demand,
 and passes "add to prompt" requests to the session that opened the page. Each page carries a
-one-off code, so only that session receives them. The helper stops after 30 idle minutes, and the
-next `/gitgraph` starts it again. A page opened from disk (when the helper could not start)
-shows the history and copying, without the Changes tab, file search, or add-to-prompt.
+one-off code, so only that session receives them. The **Refresh** button at the top right asks the
+helper to rebuild the page from the repository's current history and reloads it, keeping what you
+were looking at: the selected commit and its details, find, the picked branch, and the scroll
+position. An open page keeps the helper awake; once it has stopped (30 idle minutes with no page
+open), the next `/gitgraph` starts it again. A page opened from disk (when the helper could not
+start) shows the history and copying, without Refresh, the Changes tab, file search, or
+add-to-prompt.
+
+The helper answers only its own pages: requests must name `127.0.0.1` or `localhost` on its port,
+and refreshes and add-to-prompt must come from a page it served. That stops other websites, not
+other programs on your machine. It trusts the repositories it has registered and runs `git` in
+them, with the options that stop a repository's own configuration from running programs.
 
 **In Codex** the skill builds the page into `/tmp/gitgraph` and serves it from its own helper on
 `127.0.0.1:47322`, so it never touches Claude Code's. Codex's sandbox does not let a command listen
 on a port or open a browser, so the skill asks to run those two steps outside it; decline and the
 page opens from disk. Ask for "the in-app browser" to see it inside Codex, which needs the helper.
-Each use costs a model turn: Codex skills always run through the model. `/tmp/gitgraph` is cleared
-on reboot; running the skill again rebuilds it.
+Each use costs a model turn: Codex skills always run through the model; the page's Refresh button
+does not, and needs no further approval. `/tmp/gitgraph` is cleared on reboot; running the skill
+again rebuilds it.
 
 **`-i` costs one model turn.** A plugin cannot drive the built-in browser in auto mode, so `-i`
 asks the model to open the page. The request appears in the conversation, and it waits if the

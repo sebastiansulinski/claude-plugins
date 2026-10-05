@@ -46,6 +46,7 @@ passing arguments as separately quoted values.
    file are off until it runs.
 
 The page is read-only: it never changes the repository. It holds the 20,000 most recent commits on every
-branch, remote and tag (not the stash). A page opened from the helper reads diffs on demand; the helper
-stops after 30 idle minutes, and running this skill again starts it. `/tmp/gitgraph` is cleared on
-reboot; running the skill again rebuilds the page.
+branch, remote and tag (not the stash). A page opened from the helper reads diffs on demand, and its
+Refresh button rebuilds it from the current history without another run of this skill. An open page
+keeps the helper awake; once it has stopped (30 idle minutes), running this skill again starts it.
+`/tmp/gitgraph` is cleared on reboot; running the skill again rebuilds the page.

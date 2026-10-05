@@ -4,11 +4,14 @@ Every repository here is a disposable fixture; every helper listens on a free po
 is stopped by the test that started it.
 """
 
+import contextlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import signal
 import socket
@@ -18,10 +21,17 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Every page revision the helper version has stood for. A change to the page's code changes the
+# fingerprint: add a new entry under the next number and raise VERSION to it; never edit an entry.
+PAGE_FINGERPRINTS = {
+    6: "7309c674c069799b9ffec6a821d10ea83e51d0f0387965458952254d08a9a5fb",
+}
 RUNTIME = ROOT / "gitgraph/runtime/gitgraph.py"
 CHROME_CANDIDATES = (
     os.environ.get("GITGRAPH_TEST_CHROME", ""),
@@ -46,7 +56,7 @@ def free_port():
 
 
 def page_data(html):
-    match = re.search(r"<script>var DATA = (.*?); var PALETTE = .*?; var REPO = (.*?); var PROMPT = (.*?); var RERUN = (.*?);</script>", html)
+    match = re.search(r"<script>var DATA = (.*?); var PALETTE = .*?; var REPO = (.*?); var PROMPT = (.*?); var RERUN = (.*?); var PAGE = \d+;</script>", html)
     return json.loads(match.group(1)), json.loads(match.group(2)), json.loads(match.group(3)), json.loads(match.group(4))
 
 
@@ -341,6 +351,279 @@ class LimitTest(Fixture):
         self.assertEqual(data["edges"][-1]["parentRow"], -1)
         self.assertIn("20000 most recent commits", Path(built["file"]).read_text())
 
+        helper = self.runtime.Helper(str(self.workspace / "pages"), 0)
+        self.addCleanup(helper.server_close)
+        status, answer = self.runtime.refresh(helper, built["key"], 6)
+        self.assertEqual((status, answer), (200, {"commits": 20000, "isTruncated": True}))
+        self.assertIn("20000 most recent commits", Path(built["file"]).read_text())
+
+
+class RefreshTest(Fixture):
+    """POST /refresh rebuilds a page from the details its last build recorded."""
+
+    def post(self, port, path, body, origin="same", host=None, headers=None):
+        """Sends a POST as a page served by the helper would; answers (status, parsed body or None)."""
+        request = Request(f"http://127.0.0.1:{port}{path}", data=body if isinstance(body, bytes) else json.dumps(body).encode())
+        if origin == "same":
+            origin = f"http://127.0.0.1:{port}"
+        if origin is not None:
+            request.add_header("Origin", origin)
+        if host is not None:
+            request.add_header("Host", host)
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
+        try:
+            with urlopen(request, timeout=30) as response:
+                text = response.read()
+                return response.status, json.loads(text) if text else None
+        except HTTPError as error:
+            text = error.read()
+            try:
+                return error.code, json.loads(text)
+            except ValueError:
+                return error.code, None
+
+    def built(self, repository, root, *extra):
+        return self.run_runtime("build", "--repo", repository, "--out", root, *extra)
+
+    def test_refresh_rebuilds_with_the_last_builds_details(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.built(repository, root, "--prompt", json.dumps({"session": "A", "token": "a"}), "--rerun", "/gitgraph")
+        self.assertEqual(json.loads((root / f"{built['key']}.page.json").read_text()), {
+            "label": "project", "path": str(repository), "prompt": {"session": "A", "token": "a"}, "rerun": "/gitgraph",
+        })
+        registrations = (root / "repos.json").read_bytes()
+        (repository / "late.txt").write_text("late\n")
+        self.git(repository, "add", "late.txt")
+        self.git(repository, "commit", "-qm", "A late commit")
+
+        status, answer = self.post(port, "/refresh", {"repo": built["key"], "page": 6})
+        self.assertEqual((status, answer), (200, {"commits": 5, "isTruncated": False}))
+        data, repo, prompt, rerun = page_data(Path(built["file"]).read_text())
+        self.assertEqual(data["commits"][0]["subject"], "A late commit")
+        self.assertEqual((repo, prompt, rerun), ("project", {"session": "A", "token": "a"}, "/gitgraph"))
+        self.assertEqual((root / "repos.json").read_bytes(), registrations, "a refresh never re-registers")
+
+    def test_refusals(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.built(repository, root)
+        self.assertEqual(self.post(port, "/refresh", {"repo": "nothing", "page": 6})[0], 404)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 7})[0], 409, "a newer page")
+        self.assertEqual(self.post(port, "/refresh", b"not json")[0], 400)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"]})[0], 400)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6, "pad": "x" * 70000})[0], 400)
+        sidecar = root / f"{built['key']}.page.json"
+        details = sidecar.read_text()
+        sidecar.unlink()
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 409, "built by an older runtime")
+        sidecar.write_text(details)
+
+        moved = self.workspace / "moved"
+        repository.rename(moved)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 410)
+        moved.rename(repository)
+
+        parent = self.workspace / "parent"
+        parent.mkdir()
+        self.git(parent, "init", "-q", "-b", "main")
+        self.git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(repository), "libs/project")
+        self.git(parent, "commit", "-qm", "Add submodule")
+        inner = self.built(parent, root, "--submodule", "project")
+        self.assertEqual(inner["key"], "parent-libs-project")
+        status, answer = self.post(port, "/refresh", {"repo": inner["key"], "page": 6})
+        self.assertEqual(status, 200)
+        self.assertEqual(page_data(Path(inner["file"]).read_text())[1], "parent-libs-project")
+        self.assertIn("<title>Git graph · parent/libs/project</title>", Path(inner["file"]).read_text())
+        page = Path(inner["file"]).read_bytes()
+        self.git(parent, "submodule", "deinit", "-q", "-f", "libs/project")
+        status, answer = self.post(port, "/refresh", {"repo": inner["key"], "page": 6})
+        self.assertEqual(status, 200)
+        self.assertIn("is no longer a Git repository", answer["error"])
+        self.assertEqual(Path(inner["file"]).read_bytes(), page, "the page is left as it was")
+
+    def test_only_the_pages_own_origin_and_host(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.built(repository, root)
+        asked = {"repo": built["key"], "page": 6}
+        for origin in (None, "null", "https://example.com", "http://127.0.0.1:47322", f"http://127.0.0.1:{port}.example.com"):
+            with self.subTest(origin=origin):
+                self.assertEqual(self.post(port, "/refresh", asked, origin=origin)[0], 403)
+        self.assertEqual(self.post(port, "/refresh", asked, origin=f"http://localhost:{port}")[0], 200)
+        self.assertEqual(self.post(port, "/refresh", asked, host=f"evil.test:{port}")[0], 403)
+        note = {"session": "S", "token": "T", "text": "abc"}
+        self.assertEqual(self.post(port, "/prompt", note, origin="https://example.com")[0], 403)
+        self.assertEqual(self.post(port, "/prompt", note)[0], 204)
+        request = Request(f"http://127.0.0.1:{port}/ping", headers={"Host": f"evil.test:{port}"})
+        with self.assertRaises(HTTPError) as refused:
+            urlopen(request, timeout=10)
+        self.assertEqual(refused.exception.code, 403)
+        request = Request(f"http://127.0.0.1:{port}/quit", headers={"Sec-Fetch-Site": "cross-site"})
+        with self.assertRaises(HTTPError) as refused:
+            urlopen(request, timeout=10)
+        self.assertEqual(refused.exception.code, 403)
+        with urlopen(f"http://127.0.0.1:{port}/ping", timeout=10) as response:
+            self.assertEqual(response.read().decode(), self.runtime.VERSION, "the helper is still up")
+
+    def test_ensure_replaces_an_older_helper_and_an_older_helper_refuses_newer_pages(self):
+        older = self.workspace / "older.py"
+        older.write_text(RUNTIME.read_text().replace(f"VERSION = '{self.runtime.VERSION}'", "VERSION = 'gitgraph-server-5'"))
+        repository = self.history()
+        root = self.workspace / "pages"
+        port = free_port()
+        self.addCleanup(self.stop_helper, root, port)
+        result = subprocess.run([sys.executable, str(older), "ensure", "--root", str(root), "--port", str(port)],
+                                env=self.environment, capture_output=True, text=True)
+        self.assertEqual(json.loads(result.stdout), {"isUp": True})
+        built = self.built(repository, root)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 409)
+        older_pid = (root / "helper.pid").read_text()
+        self.assertEqual(self.run_runtime("ensure", "--root", root, "--port", port), {"isUp": True})
+        self.assertNotEqual((root / "helper.pid").read_text(), older_pid)
+        with urlopen(f"http://127.0.0.1:{port}/ping", timeout=10) as response:
+            self.assertEqual(response.read().decode(), self.runtime.VERSION)
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 200)
+
+    def test_the_page_fingerprint_is_recorded_under_the_helper_version(self):
+        current = self.runtime.version_number(self.runtime.VERSION)
+        self.assertEqual(max(PAGE_FINGERPRINTS), current, "VERSION is the newest recorded page revision")
+        self.assertEqual(self.runtime.page_fingerprint(), PAGE_FINGERPRINTS[current],
+                         "the page's code changed: record its fingerprint under a new number and raise VERSION")
+
+    def slow_graphs(self, seconds):
+        """Makes every history read take `seconds` longer; answers the list of labels read."""
+        original = self.runtime.load_graph
+        reads = []
+
+        def slow(label, path):
+            reads.append(label)
+            time.sleep(seconds)
+            return original(label, path)
+
+        self.runtime.load_graph = slow
+        self.addCleanup(setattr, self.runtime, "load_graph", original)
+        return reads
+
+    def test_clicks_while_the_repository_is_locked_share_one_rebuild(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        built = self.built(repository, root)
+        helper = self.runtime.Helper(str(root), 0)
+        self.addCleanup(helper.server_close)
+        reads = self.slow_graphs(0.2)
+        answers = []
+        with self.runtime.key_lock(str(root), built["key"]):
+            workers = [threading.Thread(target=lambda: answers.append(self.runtime.refresh(helper, built["key"], 6)))
+                       for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            time.sleep(0.3)
+        for worker in workers:
+            worker.join()
+        self.assertEqual(answers, [(200, {"commits": 4, "isTruncated": False})] * 2)
+        self.assertEqual(len(reads), 1)
+
+    def test_refreshes_of_two_repositories_at_once(self):
+        first = self.history()
+        second = self.workspace / "second"
+        shutil.copytree(first, second)
+        root = self.workspace / "pages"
+        keys = [self.built(first, root)["key"], self.built(second, root)["key"]]
+        registrations = json.loads((root / "repos.json").read_text())
+        helper = self.runtime.Helper(str(root), 0)
+        self.addCleanup(helper.server_close)
+        self.slow_graphs(0.2)
+        answers = {}
+        workers = [threading.Thread(target=lambda key=key: answers.update({key: self.runtime.refresh(helper, key, 6)}))
+                   for key in keys]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        self.assertEqual(answers, {key: (200, {"commits": 4, "isTruncated": False}) for key in keys})
+        self.assertEqual(json.loads((root / "repos.json").read_text()), registrations)
+        for key in keys:
+            page_data((root / f"{key}.html").read_text())
+        self.assertEqual([path.name for path in root.iterdir() if path.name.endswith(".tmp")], [])
+
+    def test_a_build_racing_a_refresh_keeps_its_newer_prompt(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        built = self.built(repository, root, "--prompt", json.dumps({"session": "old", "token": "o"}))
+        helper = self.runtime.Helper(str(root), 0)
+        self.addCleanup(helper.server_close)
+        self.slow_graphs(0.4)
+        refreshing = threading.Thread(target=lambda: self.runtime.refresh(helper, built["key"], 6))
+        refreshing.start()
+        time.sleep(0.1)
+        newer = SimpleNamespace(repo=str(repository), submodule=None, out=str(root), rerun="gitgraph",
+                                prompt=json.dumps({"session": "new", "token": "n"}))
+        self.runtime.build(newer)
+        refreshing.join()
+        self.assertEqual(page_data(Path(built["file"]).read_text())[2], {"session": "new", "token": "n"})
+        self.assertEqual(json.loads((root / f"{built['key']}.page.json").read_text())["prompt"],
+                         {"session": "new", "token": "n"})
+
+    def test_a_refresh_clears_the_file_search_history(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.built(repository, root)
+        base = f"http://127.0.0.1:{port}"
+        with urlopen(f"{base}/touching?repo={built['key']}&path=new.txt") as response:
+            self.assertEqual(len(json.loads(response.read())["matches"]), 1)
+        (repository / "new.txt").write_text("changed again\n")
+        self.git(repository, "commit", "-qam", "Change new again")
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 200)
+        with urlopen(f"{base}/touching?repo={built['key']}&path=new.txt") as response:
+            matches = json.loads(response.read())["matches"]
+        self.assertIn(self.git(repository, "rev-parse", "HEAD"), matches)
+
+    def test_a_git_failure_inside_a_refresh_is_an_error_answer(self):
+        repository = self.history()
+        root = self.workspace / "pages"
+        built = self.built(repository, root)
+        helper = self.runtime.Helper(str(root), 0)
+        self.addCleanup(helper.server_close)
+        original = self.runtime.load_graph
+
+        def failing(label, path):
+            raise self.runtime.Failure("git log failed.")
+
+        self.runtime.load_graph = failing
+        self.addCleanup(setattr, self.runtime, "load_graph", original)
+        self.assertEqual(self.runtime.refresh(helper, built["key"], 6), (200, {"error": "git log failed."}))
+
+    def test_a_repositorys_own_programs_never_run(self):
+        """A textconv driver in the repository's configuration would run on reading diffs or stats."""
+        repository = self.history()
+        marker = self.workspace / "ran"
+        self.git(repository, "config", "diff.marker.textconv", f"touch '{marker}' && cat")
+        (repository / ".gitattributes").write_text("*.txt diff=marker\n")
+        (repository / "new.txt").write_text("changed by the textconv commit\n")
+        self.git(repository, "add", ".")
+        self.git(repository, "commit", "-qm", "Configure textconv")
+        self.git(repository, "diff", "HEAD~1", "HEAD")
+        self.assertTrue(marker.exists(), "the fixture's driver runs when git is not told otherwise")
+        marker.unlink()
+
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.built(repository, root)
+        head = self.git(repository, "rev-parse", "HEAD")
+        base = f"http://127.0.0.1:{port}"
+        for path in (f"/changes?repo={built['key']}&hash={head}", f"/touching?repo={built['key']}&q=new",
+                     f"/paths?repo={built['key']}&q=new"):
+            with urlopen(base + path) as response:
+                response.read()
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 200)
+        self.assertFalse(marker.exists())
+
 
 class HelperTest(Fixture):
     def test_ensure_then_build_into_a_fresh_root(self):
@@ -370,7 +653,8 @@ class HelperTest(Fixture):
         self.assertEqual([entry["path"] for entry in listed["paths"]], ["feature.txt", "new.txt", "old.txt"])
         self.assertEqual(listed["paths"][2]["isInHead"], False)
 
-        posted = Request(f"{base}/prompt", data=json.dumps({"session": "S", "token": "T", "text": "abc"}).encode())
+        posted = Request(f"{base}/prompt", data=json.dumps({"session": "S", "token": "T", "text": "abc"}).encode(),
+                         headers={"Origin": base})
         with urlopen(posted) as response:
             self.assertEqual(response.status, 204)
         with urlopen(f"{base}/inbox?session=S&token=T") as response:
@@ -414,6 +698,7 @@ class PageModesTest(Fixture):
             "helper": 'data-helper="on"' in root,
             "prompt": 'data-prompt="on"' in root,
             "findByFile": "disabled" not in files,
+            "refresh": 'data-refresh="on"' in root and re.search(r'<button class="mode" id="refresh"[^>]*hidden', dump) is None,
         }
 
     def test_served_and_from_disk_with_and_without_prompt(self):
@@ -424,15 +709,233 @@ class PageModesTest(Fixture):
 
         claude = self.run_runtime("build", "--repo", repository, "--out", root, "--prompt", prompt, "--rerun", "/gitgraph")
         self.assertEqual(self.capabilities(f"http://127.0.0.1:{port}/{claude['key']}.html"),
-                         {"helper": True, "prompt": True, "findByFile": True})
+                         {"helper": True, "prompt": True, "findByFile": True, "refresh": True})
         self.assertEqual(self.capabilities(Path(claude["file"]).as_uri()),
-                         {"helper": False, "prompt": False, "findByFile": False})
+                         {"helper": False, "prompt": False, "findByFile": False, "refresh": False})
 
         codex = self.run_runtime("build", "--repo", repository, "--out", root)
         self.assertEqual(self.capabilities(f"http://127.0.0.1:{port}/{codex['key']}.html"),
-                         {"helper": True, "prompt": False, "findByFile": True})
+                         {"helper": True, "prompt": False, "findByFile": True, "refresh": True})
         self.assertEqual(self.capabilities(Path(codex["file"]).as_uri()),
-                         {"helper": False, "prompt": False, "findByFile": False})
+                         {"helper": False, "prompt": False, "findByFile": False, "refresh": False})
+
+    def test_an_older_helper_shows_no_refresh_button(self):
+        """A page served by a version 5 helper keeps its Changes tab and file search, with no button."""
+        repository = self.history()
+        root = self.workspace / "pages"
+        built = self.run_runtime("build", "--repo", repository, "--out", root)
+        page = Path(built["file"]).read_bytes()
+
+        class Older(BaseHTTPRequestHandler):
+            def log_message(self, *arguments):
+                pass
+
+            def do_GET(self):
+                body = b"gitgraph-server-5" if self.path == "/ping" else page
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Older)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.assertEqual(self.capabilities(f"http://127.0.0.1:{server.server_address[1]}/{built['key']}.html"),
+                         {"helper": True, "prompt": False, "findByFile": True, "refresh": False})
+
+
+class Chrome:
+    """Headless Chrome driven over its DevTools Protocol pipe (file descriptors 3 and 4)."""
+
+    def __init__(self, test, url):
+        profile = tempfile.mkdtemp(prefix="gitgraph-chrome-")
+        test.addCleanup(shutil.rmtree, profile, True)
+        commands, self.to_chrome = os.pipe()
+        self.from_chrome, answers = os.pipe()
+
+        def wire():
+            os.dup2(commands, 3)
+            os.dup2(answers, 4)
+
+        self.process = subprocess.Popen(
+            [CHROME, "--headless=new", "--disable-gpu", "--no-first-run", f"--user-data-dir={profile}",
+             "--remote-debugging-pipe", "about:blank"],
+            preexec_fn=wire, pass_fds=(3, 4), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+        os.close(commands)
+        os.close(answers)
+        test.addCleanup(self.close)
+        self.buffer = b""
+        self.number = 0
+        self.errors = []
+        target = self.send("Target.createTarget", {"url": "about:blank"})["targetId"]
+        self.session = self.send("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+        self.send("Runtime.enable", session=self.session)
+        self.send("Page.navigate", {"url": url}, session=self.session)
+
+    def close(self):
+        with contextlib.suppress(OSError):
+            os.killpg(self.process.pid, signal.SIGKILL)
+        self.process.wait()
+        for descriptor in (self.to_chrome, self.from_chrome):
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+
+    def receive(self, deadline):
+        while b"\0" not in self.buffer:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.from_chrome], [], [], remaining)[0]:
+                raise TimeoutError("Chrome did not answer")
+            chunk = os.read(self.from_chrome, 1 << 20)
+            if not chunk:
+                raise ConnectionError("Chrome closed its pipe")
+            self.buffer += chunk
+        message, self.buffer = self.buffer.split(b"\0", 1)
+        message = json.loads(message)
+        if message.get("method") == "Runtime.exceptionThrown":
+            self.errors.append(message["params"]["exceptionDetails"].get("exception", {}).get("description", "error"))
+        return message
+
+    def send(self, method, params=None, session=None, timeout=30):
+        self.number += 1
+        message = {"id": self.number, "method": method, "params": params or {}}
+        if session:
+            message["sessionId"] = session
+        os.write(self.to_chrome, json.dumps(message).encode() + b"\0")
+        deadline = time.monotonic() + timeout
+        while True:
+            answer = self.receive(deadline)
+            if answer.get("id") == self.number:
+                if "error" in answer:
+                    raise RuntimeError(answer["error"])
+                return answer["result"]
+
+    def evaluate(self, expression):
+        result = self.send("Runtime.evaluate", {"expression": expression, "awaitPromise": True, "returnByValue": True},
+                           session=self.session)
+        if "exceptionDetails" in result:
+            raise RuntimeError(result["exceptionDetails"])
+        return result["result"].get("value")
+
+    def wait(self, expression, timeout=20):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                value = self.evaluate(expression)
+            except RuntimeError:
+                value = None
+            if value:
+                return value
+            time.sleep(0.1)
+        raise AssertionError(f"timed out waiting for {expression}")
+
+
+@unittest.skipUnless(CHROME, "needs Google Chrome or Chromium (set GITGRAPH_TEST_CHROME)")
+class RefreshPageTest(Fixture):
+    """The Refresh button rebuilds the page and brings back what was in view."""
+
+    VIEW = """JSON.stringify((function () {
+      var list = document.getElementById('list'), selected = document.querySelector('#list .r.sel');
+      var on = document.querySelector('#detail .files .file.on'), tab = document.querySelector('#detail .tabs .on');
+      var leaf = document.querySelector('#refs .leaf.on');
+      return {
+        first: DATA.commits[0].subject,
+        isFirstMatched: !document.querySelector('#list .r[data-row="0"]').classList.contains('miss'),
+        find: document.getElementById('find').value,
+        mode: document.querySelector('#modes .on').getAttribute('data-mode'),
+        count: document.getElementById('count').textContent,
+        leaf: leaf ? leaf.getAttribute('data-kind') + ':' + leaf.getAttribute('data-name') : null,
+        selected: selected ? DATA.commits[Number(selected.getAttribute('data-row'))].fullHash : null,
+        isDetailOpen: !document.getElementById('detail').hidden,
+        tab: tab ? tab.getAttribute('data-tab') : null,
+        file: on ? on.getAttribute('title') : null,
+        scroll: list.scrollTop,
+        commits: DATA.commits.length
+      };
+    })())"""
+
+    def repository_of_many(self):
+        """125 commits: each changes one of ten notes, every seventh also composer.json; topic and v1 refs."""
+        repository = self.workspace / "many"
+        repository.mkdir()
+        self.git(repository, "init", "-q", "-b", "main")
+        stream = []
+        for mark in range(1, 126):
+            message = f"Commit {mark}\n"
+            stream.append(f"commit refs/heads/main\nmark :{mark}\ncommitter Fixture <fixture@example.test> {1700000000 + mark * 60} +0000\n")
+            stream.append(f"data {len(message)}\n{message}")
+            if mark > 1:
+                stream.append(f"from :{mark - 1}\n")
+            note = f"note {mark}\n"
+            stream.append(f"M 644 inline notes/n{mark % 10}.txt\ndata {len(note)}\n{note}")
+            if mark % 7 == 0 or mark == 1:
+                stream.append(f"M 644 inline composer.json\ndata {len(note)}\n{note}")
+            stream.append("\n")
+        stream.append("reset refs/heads/topic\nfrom :60\n\nreset refs/tags/v1\nfrom :30\n\n")
+        self.git(repository, "fast-import", "--quiet", payload="".join(stream))
+        self.git(repository, "reset", "-q", "--hard")
+        return repository
+
+    def test_refresh_keeps_the_view_and_shows_the_new_commit(self):
+        repository = self.repository_of_many()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.run_runtime("build", "--repo", repository, "--out", root, "--rerun", "/gitgraph")
+        chrome = Chrome(self, f"http://127.0.0.1:{port}/{built['key']}.html")
+        chrome.wait("document.documentElement.getAttribute('data-refresh') === 'on'")
+
+        chrome.evaluate("document.querySelector('#refs .leaf[data-kind=\"branches\"][data-name=\"topic\"]').click()")
+        chrome.evaluate("""(function () {
+          document.querySelector('[data-mode="files"]').click();
+          var find = document.getElementById('find');
+          find.value = 'composer';
+          find.dispatchEvent(new Event('input'));
+        })()""")
+        chrome.wait("Array.prototype.some.call(document.querySelectorAll('#suggest .o'), function (o) { return o.title === 'composer.json'; })")
+        chrome.evaluate("""Array.prototype.filter.call(document.querySelectorAll('#suggest .o'), function (o) {
+          return o.title === 'composer.json';
+        })[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))""")
+        chrome.wait("document.getElementById('count').textContent === '18 commits'")
+        chrome.evaluate("document.querySelectorAll('#list .r:not(.miss)')[4].querySelector('.s').click()")
+        chrome.wait("(document.querySelector('#detail .files .file.on') || {}).title === 'composer.json'")
+        chrome.evaluate("document.getElementById('list').scrollTop = 40 * 28 + 7")
+        before = json.loads(chrome.evaluate(self.VIEW))
+        self.assertEqual((before["mode"], before["find"], before["leaf"], before["tab"]),
+                         ("files", "composer.json", "branches:topic", "changes"))
+
+        (repository / "composer.json").write_text("late\n")
+        self.git(repository, "commit", "-qam", "A late composer change")
+        chrome.evaluate("window.beforeRefresh = true; document.getElementById('refresh').click()")
+        chrome.wait("!window.beforeRefresh && document.getElementById('count').textContent === '19 commits' && "
+                    "(document.querySelector('#detail .files .file.on') || {}).title === 'composer.json'")
+        after = json.loads(chrome.evaluate(self.VIEW))
+        self.assertEqual(after["first"], "A late composer change")
+        self.assertTrue(after["isFirstMatched"], "the new commit is matched by the restored filter")
+        self.assertEqual(after["commits"], before["commits"] + 1)
+        for field in ("mode", "find", "leaf", "selected", "tab", "file"):
+            self.assertEqual(after[field], before[field], field)
+        self.assertTrue(after["isDetailOpen"])
+        self.assertEqual(after["scroll"], before["scroll"] + 28, "the same commit stays at the top of the view")
+        self.assertEqual(chrome.errors, [])
+
+        # A branch and its only commit that vanish before the next refresh are skipped.
+        tip = self.git(repository, "commit-tree", "-p", "HEAD", "-m", "Only on gone", f"{self.git(repository, 'rev-parse', 'HEAD')}^{{tree}}")
+        self.git(repository, "branch", "gone", tip)
+        chrome.evaluate("window.beforeRefresh = true; document.getElementById('refresh').click()")
+        chrome.wait("!window.beforeRefresh && document.querySelector('#refs .leaf[data-name=\"gone\"]') !== null")
+        chrome.evaluate("document.querySelector('#refs .leaf[data-name=\"gone\"]').click()")
+        chrome.evaluate("document.querySelector('#list .r.sel .s').click()")
+        chrome.wait("!document.getElementById('detail').hidden")
+        self.git(repository, "branch", "-D", "-q", "gone")
+        chrome.evaluate("window.beforeRefresh = true; document.getElementById('refresh').click()")
+        chrome.wait("!window.beforeRefresh && document.documentElement.getAttribute('data-refresh') === 'on'")
+        time.sleep(1.5)
+        gone = json.loads(chrome.evaluate(self.VIEW))
+        self.assertIsNone(gone["leaf"])
+        self.assertIsNone(gone["selected"])
+        self.assertFalse(gone["isDetailOpen"])
+        self.assertEqual(chrome.errors, [])
 
 
 if __name__ == "__main__":

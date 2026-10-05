@@ -8,12 +8,19 @@ The one runtime behind the Claude Code plugin and the Codex skill, for Python 3.
       prints {"isUp": true|false}. The helper runs fully detached, so it outlives the command.
   gitgraph.py build --repo PATH [--submodule NAME] --out DIR [--prompt JSON] [--rerun TEXT]
       Reads the history of the repository at PATH (or of its submodule NAME), writes the page
-      into DIR, registers the repository in DIR/repos.json for the helper, and prints
+      into DIR with what it was built from beside it (DIR/<key>.page.json, for refreshes),
+      registers the repository in DIR/repos.json for the helper, and prints
       {"file", "key", "repository", "commits", "isTruncated"}, or {"error"} with exit code 1.
   gitgraph.py serve --root DIR --port PORT
-      The helper: serves DIR's pages on 127.0.0.1, answers /changes and /touching for the
-      repositories DIR/repos.json names, and relays "add to prompt" requests (/prompt,
-      /inbox). It exits after thirty minutes without a request.
+      The helper: serves DIR's pages on 127.0.0.1; answers /ping (its version), /changes,
+      /touching and /paths for the repositories DIR/repos.json names; rebuilds a page on
+      POST /refresh; relays "add to prompt" requests (POST /prompt, /inbox); stops on /quit.
+      POSTs must come from its own pages (their Origin), and every request must name it as
+      its Host. It exits after thirty minutes without a request; an open page pings it every
+      five minutes.
+
+A registered path is trusted: the helper runs git there (with the guards in GIT_GUARDS, so the
+repository's own configuration cannot make git run a program).
 
 The page's repository features (the Changes tab, find by file) switch on when the page,
 served over http by the helper, hears back from /ping; "add to prompt" needs that and the
@@ -22,11 +29,16 @@ offers the history and copying alone.
 """
 
 import argparse
+import contextlib
+import fcntl
+import hashlib
+import inspect
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -34,7 +46,10 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
 
-VERSION = 'gitgraph-server-5'
+# The helper's version is also the page's revision: it rises whenever the helper's endpoints or the
+# page's code change (the test of page_fingerprint enforces the second), so a helper never rebuilds a
+# page with older page code, and ensure replaces an older helper.
+VERSION = 'gitgraph-server-6'
 LIMIT = 20000
 PALETTE = ['#a855f7', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6', '#ef4444', '#84cc16']
 
@@ -52,6 +67,10 @@ LOG_ARGUMENTS = [
     '--format=%x1e' + '%x1f'.join(['%H', '%h', '%P', '%p', '%D', '%an', '%ae', '%cn', '%ce', '%at', '%ct', '%s', '%b']) + '%x1d',
 ]
 
+# Every git call also carries these, so a repository's own configuration cannot make git run a
+# program: diff and log calls add --no-textconv and --no-ext-diff themselves.
+GIT_GUARDS = ['-c', 'core.fsmonitor=false', '-c', 'diff.external=']
+
 # What JavaScript's String.prototype.trim removes, so commit bodies match what the page used to get.
 JAVASCRIPT_WHITESPACE = '\t\n\v\f\r                  　﻿'
 
@@ -61,7 +80,7 @@ class Failure(Exception):
 
 
 def run_git(path, *arguments, timeout=60):
-    done = subprocess.run(['git', '-C', path] + list(arguments), capture_output=True, timeout=timeout)
+    done = subprocess.run(['git', '-C', path] + GIT_GUARDS + list(arguments), capture_output=True, timeout=timeout)
 
     return done.returncode, done.stdout.decode('utf-8', 'replace'), done.stderr.decode('utf-8', 'replace')
 
@@ -277,8 +296,8 @@ def layout_graph(raw):
 
 def load_graph(label, path):
     done = subprocess.run(
-        ['git', 'log', '--no-show-signature', '--exclude=refs/stash', '--all', '--max-count={}'.format(LIMIT + 1)]
-        + LOG_ARGUMENTS,
+        ['git'] + GIT_GUARDS + ['log', '--no-show-signature', '--no-textconv', '--no-ext-diff', '--exclude=refs/stash',
+                                '--all', '--max-count={}'.format(LIMIT + 1)] + LOG_ARGUMENTS,
         cwd=path, capture_output=True, timeout=120,
     )
     if done.returncode != 0:
@@ -343,6 +362,11 @@ header .mode{width:30px;height:30px;display:grid;place-items:center;border:1px s
 header .mode:hover{color:var(--fg);background:var(--hover)}
 header .mode svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 header .mode .moon,:root[data-theme="light"] header .mode .sun{display:none}
+header .mode[hidden]{display:none}
+header .mode:disabled{cursor:progress}
+header .mode.busy svg{animation:gitgraph-spin 1s linear infinite}
+@keyframes gitgraph-spin{to{transform:rotate(360deg)}}
+:root[data-refresh="on"] header .note{display:none}
 :root[data-theme="light"] header .mode .moon{display:block}
 #list{flex:1;overflow:auto;position:relative;padding:10px 0 14px}
 #list svg{position:absolute;left:0;pointer-events:none}
@@ -442,6 +466,14 @@ SCRIPT = r'''
   // the session details (PROMPT) of the Claude Code session that built it.
   var HELPER = false;
   function canPrompt() { return HELPER && !!PROMPT; }
+  // A refresh saves what was in view under the repository's key just before it reloads the page;
+  // the reloaded page takes it back once (restoreLayout, then restoreAfterHelper).
+  var VIEW_KEY = 'gitgraph-view:' + REPO, restoring = null;
+  try {
+    restoring = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null');
+    sessionStorage.removeItem(VIEW_KEY);
+  } catch (error) { restoring = null; }
+  if (!restoring || restoring.v !== 1) restoring = null;
   var commits = DATA.commits, edges = DATA.edges;
   var list = document.getElementById('list');
   var preferred = null;
@@ -565,16 +597,16 @@ SCRIPT = r'''
     if (node.ref && node.ref.isHead) return true;
     return Object.keys(node.kids).some(function (k) { return holdsHead(node.kids[k]); });
   }
-  function render(node, prefix, openAll) {
+  function render(node, prefix, openAll, kind) {
     return Object.keys(node.kids).sort(function (a, b) { return a.localeCompare(b); }).map(function (name) {
       var child = node.kids[name], html = '';
       if (child.ref) {
-        html += '<div class="leaf' + (child.ref.isHead ? ' head' : '') + '" data-row="' + child.ref.row + '" data-name="' + esc(prefix + name) + '" title="' + esc(prefix + name) + '">' +
+        html += '<div class="leaf' + (child.ref.isHead ? ' head' : '') + '" data-row="' + child.ref.row + '" data-kind="' + kind + '" data-name="' + esc(prefix + name) + '" title="' + esc(prefix + name) + '">' +
           '<i style="background:' + colour(child.ref.lane) + '"></i>' + esc(name) + '</div>';
       }
       if (Object.keys(child.kids).length) {
         var open = openAll || holdsHead(child) || leaves(child) <= 4;
-        html += '<details' + (open ? ' open' : '') + '><summary>' + esc(name) + '</summary><div class="kids">' + render(child, prefix + name + '/', false) + '</div></details>';
+        html += '<details data-key="' + esc(kind + ':' + prefix + name) + '"' + (open ? ' open' : '') + '><summary>' + esc(name) + '</summary><div class="kids">' + render(child, prefix + name + '/', false, kind) + '</div></details>';
       }
       return html;
     }).join('');
@@ -590,21 +622,21 @@ SCRIPT = r'''
       });
     });
   });
-  function section(title, names, openAll) {
-    var body = names.length ? render(tree(names), '', openAll) : '<div class="empty">None</div>';
-    return '<details open><summary>' + title + '</summary><div class="kids">' + body + '</div></details>';
+  function section(title, names, openAll, kind) {
+    var body = names.length ? render(tree(names), '', openAll, kind) : '<div class="empty">None</div>';
+    return '<details data-key="' + kind + '" open><summary>' + title + '</summary><div class="kids">' + body + '</div></details>';
   }
   document.getElementById('refs').innerHTML =
-    section('Branches', sets.branches, false) + section('Remotes', sets.remotes, true) + section('Tags', sets.tags, false);
+    section('Branches', sets.branches, false, 'branches') + section('Remotes', sets.remotes, true, 'remotes') + section('Tags', sets.tags, false, 'tags');
 
   // --------------------------------------------------------------- behaviour
   var selected = null;
-  function select(row) {
+  function select(row, isQuiet) {
     if (selected) selected.classList.remove('sel');
     selected = rowEls[row] || null;
     if (!selected) return;
     selected.classList.add('sel');
-    reveal(row);
+    if (!isQuiet) reveal(row);
   }
   // Scrolls a row into the middle of the graph when it is out of view.
   function reveal(row) {
@@ -999,20 +1031,34 @@ SCRIPT = r'''
   // current, so a late answer never reopens a closed list or replaces a picked file's results.
   var suggest = document.getElementById('suggest'), listQuery = 0, suggestions = [], suggestAt = -1;
   var picked = null, isListDismissed = false;
+  // A restored find answers quietly (no jump to its first match) and then hands over to the rest
+  // of the restore.
+  var isQuietFind = false, afterFilter = null;
+  function filterSettled() {
+    var next = afterFilter;
+    afterFilter = null;
+    if (next) next();
+  }
   // The helper's features switch on once it answers; opened from disk, the page never asks.
   var filesButton = modes.querySelector('[data-mode="files"]'), filesTitle = filesButton.title;
   filesButton.disabled = true;
   filesButton.title = 'Needs the gitgraph helper: run ' + RERUN + ' again';
+  // A helper from version 6 up can also rebuild the page (the Refresh button).
   if (/^https?:$/.test(location.protocol)) {
     fetch('/ping').then(function (response) { return response.ok ? response.text() : ''; }).then(function (version) {
-      if (version.indexOf('gitgraph-server-') !== 0) return;
-      HELPER = true;
-      document.documentElement.setAttribute('data-helper', 'on');
-      if (PROMPT) document.documentElement.setAttribute('data-prompt', 'on');
-      filesButton.disabled = false;
-      filesButton.title = filesTitle;
-      if (shownRow >= 0) openDetail(commits[shownRow]);
-    }, function () {});
+      if (version.indexOf('gitgraph-server-') === 0) {
+        HELPER = true;
+        document.documentElement.setAttribute('data-helper', 'on');
+        if (PROMPT) document.documentElement.setAttribute('data-prompt', 'on');
+        filesButton.disabled = false;
+        filesButton.title = filesTitle;
+        if (shownRow >= 0) openDetail(commits[shownRow]);
+        if (Number((/(\d+)$/.exec(version) || [0, 0])[1]) >= 6) enableRefresh();
+      }
+      restoreAfterHelper();
+    }, function () { restoreAfterHelper(); });
+  } else {
+    setTimeout(restoreAfterHelper, 0);
   }
   function setCount(text) {
     counter.textContent = text;
@@ -1047,7 +1093,8 @@ SCRIPT = r'''
     });
     paint();
     setCount(hits.length ? hits.length + (hits.length === 1 ? ' commit' : ' commits') : 'no matches');
-    if (hits.length) reveal(hits[0].row);
+    if (hits.length && !isQuietFind) reveal(hits[0].row);
+    filterSettled();
   }
   function findCommits() {
     var needle = find.value.trim().toLowerCase();
@@ -1136,6 +1183,7 @@ SCRIPT = r'''
           if (ticket !== fileQuery) return;
           clearFilter();
           setCount('unavailable');
+          filterSettled();
           show(String(error.message) === 'outdated'
             ? 'The gitgraph helper running now is older than this page. Run ' + RERUN + ' again to update it.'
             : 'The gitgraph helper did not answer. Run ' + RERUN + ' again to restart it.', 6000);
@@ -1143,12 +1191,15 @@ SCRIPT = r'''
     }, picked !== null ? 0 : 220);
   }
   function runFind() { if (mode === 'files') findFiles(); else findCommits(); }
+  function setMode(name) {
+    mode = name;
+    modes.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-mode') === name); });
+    find.placeholder = mode === 'files' ? 'Find files: part of a path or file name' : 'Find commits: subject, author, hash or ref';
+  }
   modes.addEventListener('click', function (e) {
     var button = e.target.closest('button');
     if (!button || button.disabled || button.getAttribute('data-mode') === mode) return;
-    mode = button.getAttribute('data-mode');
-    modes.querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b === button); });
-    find.placeholder = mode === 'files' ? 'Find files: part of a path or file name' : 'Find commits: subject, author, hash or ref';
+    setMode(button.getAttribute('data-mode'));
     ++fileQuery;
     ++listQuery;
     picked = null;
@@ -1243,8 +1294,155 @@ SCRIPT = r'''
     try { localStorage.setItem('gitgraph-theme', isLight ? 'light' : 'dark'); } catch (error) { /* the choice lasts this page */ }
   });
 
+  // Refresh: the helper rebuilds the page from the details its last build recorded, and the page
+  // reloads with what was in view. While the button is shown the page also keeps the helper awake
+  // (it stops after thirty minutes without a request).
+  var refreshButton = document.getElementById('refresh'), refsNav = document.getElementById('refs');
+  var rowOf = {};
+  commits.forEach(function (c) { rowOf[c.fullHash] = c.row; });
+  function wake() { fetch('/ping').catch(function () {}); }
+  function enableRefresh() {
+    document.documentElement.setAttribute('data-refresh', 'on');
+    refreshButton.hidden = false;
+    setInterval(wake, 300000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) wake(); });
+  }
+  refreshButton.addEventListener('click', function () {
+    if (refreshButton.disabled) return;
+    var began = Date.now(), title = refreshButton.title;
+    refreshButton.disabled = true;
+    refreshButton.classList.add('busy');
+    var tick = setInterval(function () {
+      var seconds = Math.round((Date.now() - began) / 1000);
+      refreshButton.title = 'Refreshing… ' + seconds + ' s';
+      show('Refreshing… ' + seconds + ' s', 1500);
+    }, 1000);
+    function stop(message) {
+      clearInterval(tick);
+      refreshButton.disabled = false;
+      refreshButton.classList.remove('busy');
+      refreshButton.title = title;
+      if (message) show(message, 6000);
+    }
+    fetch('/refresh', { method: 'POST', body: JSON.stringify({ repo: REPO, page: PAGE }) })
+      .then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (data) { return { status: response.status, data: data || {} }; });
+      })
+      .then(function (answer) {
+        if (answer.status === 200 && !answer.data.error) {
+          clearInterval(tick);
+          saveView();
+          location.reload();
+          return;
+        }
+        var reason = answer.data.reason;
+        stop(reason === 'not-registered' ? 'This page is no longer registered with the gitgraph helper. Run ' + RERUN + ' again.'
+          : reason === 'gone' ? 'The repository was moved or deleted.'
+          : reason === 'older-helper' ? 'The gitgraph helper running now is older than this page. Run ' + RERUN + ' again to update it.'
+          : reason === 'no-details' ? 'This page was built by an older gitgraph. Run ' + RERUN + ' again.'
+          : answer.status === 403 ? 'The gitgraph helper refused the request.'
+          : answer.data.error || 'The page could not be refreshed.');
+      }, function () { stop('The gitgraph helper has stopped. Run ' + RERUN + ' again.'); });
+  });
+
+  // What a refresh keeps: the commit at the top of the list (or the very top), the selected commit
+  // with its details, tab and file, find, the picked branch, remote or tag, and the sidebar.
+  function saveView() {
+    var topRow = Math.min(commits.length - 1, Math.floor(Math.max(0, list.scrollTop - 10) / ROW));
+    var shown = shownRow >= 0 && !detail.hidden ? commits[shownRow] : null;
+    var loaded = shown && changesOf[shown.fullHash], file = null;
+    if (loaded && tab === 'changes' && loaded.files && loaded.files[shownFile]) file = loaded.files[shownFile].path;
+    var open = {};
+    refsNav.querySelectorAll('details[data-key]').forEach(function (el) { open[el.getAttribute('data-key')] = el.open; });
+    var view = {
+      v: 1,
+      isAtTop: list.scrollTop < ROW,
+      top: commits[topRow].fullHash,
+      after: commits.slice(topRow + 1, topRow + 21).map(function (c) { return c.fullHash; }),
+      offset: list.scrollTop - topRow * ROW,
+      scroll: list.scrollTop,
+      selected: selected ? commits[Number(selected.getAttribute('data-row'))].fullHash : null,
+      detail: shown ? shown.fullHash : null,
+      tab: tab,
+      file: file,
+      find: { mode: mode, text: find.value, picked: picked, at: filterAt },
+      ref: focusLeaf ? { kind: focusLeaf.getAttribute('data-kind'), name: focusLeaf.getAttribute('data-name') } : null,
+      open: open,
+      nav: refsNav.scrollTop,
+    };
+    try { sessionStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (error) { /* reload without it */ }
+  }
+  function scrollList(view) {
+    if (view.isAtTop) { list.scrollTop = 0; return; }
+    var row = rowOf[view.top];
+    if (row === undefined) {
+      (view.after || []).some(function (hash, index) {
+        if (rowOf[hash] === undefined) return false;
+        row = rowOf[hash] - index - 1;
+        return true;
+      });
+    }
+    list.scrollTop = row === undefined ? view.scroll : Math.max(0, row * ROW + view.offset);
+  }
+  // First, at load: the sidebar, the picked ref and the scroll position.
+  function restoreLayout(view) {
+    refsNav.querySelectorAll('details[data-key]').forEach(function (el) {
+      var key = el.getAttribute('data-key');
+      if (view.open && Object.prototype.hasOwnProperty.call(view.open, key)) el.open = !!view.open[key];
+    });
+    if (view.ref) {
+      var leaf = Array.prototype.filter.call(refsNav.querySelectorAll('.leaf'), function (el) {
+        return el.getAttribute('data-kind') === view.ref.kind && el.getAttribute('data-name') === view.ref.name;
+      })[0];
+      if (leaf) setFocus(leaf);
+    }
+    refsNav.scrollTop = view.nav || 0;
+    scrollList(view);
+  }
+  // Then, once /ping has answered (Files mode and the Changes tab need the helper): find, then the
+  // selection and its details, then the scroll position again.
+  function restoreAfterHelper() {
+    var view = restoring;
+    restoring = null;
+    if (!view) return;
+    function finish() {
+      isQuietFind = false;
+      var row = view.selected ? rowOf[view.selected] : undefined;
+      if (row !== undefined) select(row, true);
+      var shownAt = view.detail ? rowOf[view.detail] : undefined;
+      if (shownAt !== undefined) {
+        tab = view.tab === 'changes' && HELPER ? 'changes' : 'details';
+        preferred = view.file ? { hash: view.detail, paths: [view.file] } : null;
+        openDetail(commits[shownAt]);
+      }
+      scrollList(view);
+    }
+    var asked = view.find || {};
+    if (!asked.text) return finish();
+    var isFiles = asked.mode === 'files' && HELPER;
+    if (isFiles) setMode('files');
+    find.value = asked.text;
+    picked = isFiles && typeof asked.picked === 'string' ? asked.picked : null;
+    isListDismissed = true;
+    isQuietFind = true;
+    var isDone = false;
+    afterFilter = function () {
+      if (isDone) return;
+      isDone = true;
+      if (asked.at >= 0 && asked.at < filterHits.length) {
+        filterAt = asked.at;
+        setCount((filterAt + 1) + ' / ' + filterHits.length);
+      }
+      finish();
+    };
+    // A find that never answers (the helper stopped) still lets the rest come back.
+    setTimeout(function () { if (!isDone) { afterFilter = null; isDone = true; finish(); } }, 8000);
+    runFind();
+  }
+
   var head = commits.filter(function (c) { return c.isHead; })[0];
-  if (head && head.row > 20) select(head.row);
+  if (restoring) restoreLayout(restoring);
+  else if (head && head.row > 20) select(head.row);
 })();
 '''
 
@@ -1253,6 +1451,7 @@ SUN = (
     '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
 )
 MOON = '<svg class="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>'
+TURN = '<svg class="turn" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>'
 
 
 def to_json(value):
@@ -1281,42 +1480,107 @@ def build_page(graph, generated_at, repo, prompt, rerun):
         "<script>try{if(localStorage.getItem('gitgraph-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(error){}</script>"
         '</head><body><header>'
         '<strong>' + title + '</strong><span>' + str(len(graph['commits'])) + truncated + ' commits · generated '
-        + escape_html(generated_at) + ' · run ' + escape_html(rerun) + ' again to refresh</span>'
+        + escape_html(generated_at) + '<span class="note"> · run ' + escape_html(rerun) + ' again to refresh</span></span>'
         '<div class="find"><div class="modes" id="modes">'
         '<button data-mode="commits" class="on" title="Find commits by subject, author, hash or ref">Commits</button>'
         '<button data-mode="files" title="Show only the commits that changed a file whose path contains the text">Files</button></div>'
         '<div class="box"><input id="find" placeholder="Find commits: subject, author, hash or ref" autocomplete="off">'
         '<span class="count" id="count"></span><div id="suggest" hidden></div></div></div>'
+        '<button class="mode" id="refresh" title="Refresh: rebuild this page from the repository" hidden>' + TURN + '</button>'
         '<button class="mode" id="mode" title="Switch between dark and light">' + SUN + MOON + '</button></header>'
         '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">'
         '<div id="list"></div><div id="detail" hidden></div></div></div>'
         '<div id="menu" hidden></div><div id="toast" hidden></div>'
         '<script>var DATA = ' + to_json({'commits': graph['commits'], 'edges': graph['edges']})
         + '; var PALETTE = ' + to_json(PALETTE) + '; var REPO = ' + to_json(repo)
-        + '; var PROMPT = ' + to_json(prompt) + '; var RERUN = ' + to_json(rerun) + ';</script>'
+        + '; var PROMPT = ' + to_json(prompt) + '; var RERUN = ' + to_json(rerun)
+        + '; var PAGE = ' + str(version_number(VERSION)) + ';</script>'
         '<script>' + SCRIPT + '</script></body></html>'
     )
 
 
+def page_fingerprint():
+    """
+    A digest of everything that decides what a page looks like and does. tests/test_gitgraph.py
+    records it under the helper version, so a change to the page cannot ship under an old version.
+    """
+    digest = hashlib.sha256()
+    for part in (STYLE, SCRIPT, SUN, MOON, TURN, json.dumps(PALETTE), json.dumps(LOG_ARGUMENTS), JAVASCRIPT_WHITESPACE,
+                 FIELD + RECORD + END, str(LIMIT)):
+        digest.update(part.encode('utf-8'))
+    for function in (build_page, to_json, escape_html, load_graph, parse_log, parse_refs, stat_of, number,
+                     layout_graph):
+        digest.update(inspect.getsource(function).encode('utf-8'))
+
+    return digest.hexdigest()
+
+
+def slug(label):
+    """The key a page and its registration go by: `flow-base/flow` gives `flow-base-flow`."""
+    return re.sub(r'[^\w.-]+', '-', label, flags=re.ASCII)
+
+
 def write_atomically(path, text):
-    temporary = '{}.{}.tmp'.format(path, os.getpid())
-    with open(temporary, 'w', encoding='utf-8') as handle:
-        handle.write(text)
-    os.replace(temporary, path)
+    """Writes through a temporary file of its own beside `path`, so no reader sees half a file."""
+    descriptor, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.' + os.path.basename(path) + '.')
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(temporary)
+        raise
+
+
+@contextlib.contextmanager
+def file_lock(path):
+    """An exclusive lock on `path` (created if missing), held across processes and threads alike."""
+    with open(path, 'a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def key_lock(directory, key):
+    """The lock a build or a refresh holds while it reads a page's details and writes the page."""
+    return file_lock(os.path.join(directory, key + '.lock'))
 
 
 def register_repository(directory, key, path):
     """Records which repository a page's key names, so the helper reads only registered ones."""
     file = os.path.join(directory, 'repos.json')
+    with file_lock(os.path.join(directory, 'repos.lock')):
+        try:
+            with open(file, encoding='utf-8') as handle:
+                known = json.load(handle)
+        except (OSError, ValueError):
+            known = {}
+        if not isinstance(known, dict):
+            known = {}
+        known[key] = path
+        write_atomically(file, json.dumps(known, indent=2))
+
+
+def sidecar_path(directory, key):
+    # Not an .html file, so the helper never serves it.
+    return os.path.join(directory, key + '.page.json')
+
+
+def read_sidecar(directory, key):
+    """What the last build of a page used: {"label", "path", "prompt", "rerun"}, or None."""
     try:
-        with open(file, encoding='utf-8') as handle:
-            known = json.load(handle)
+        with open(sidecar_path(directory, key), encoding='utf-8') as handle:
+            details = json.load(handle)
     except (OSError, ValueError):
-        known = {}
-    if not isinstance(known, dict):
-        known = {}
-    known[key] = path
-    write_atomically(file, json.dumps(known, indent=2))
+        return None
+    if not isinstance(details, dict) or not isinstance(details.get('label'), str) or not isinstance(details.get('rerun'), str):
+        return None
+
+    return details
 
 
 def read_prompt(text):
@@ -1332,20 +1596,35 @@ def read_prompt(text):
     return {'session': prompt['session'], 'token': prompt['token']}
 
 
-def build(arguments):
-    prompt = read_prompt(arguments.prompt)
-    label, path = resolve_target(os.path.abspath(os.path.expanduser(arguments.repo)), arguments.submodule)
+def render_page(directory, key, label, path, prompt, rerun):
+    """
+    Reads the repository's history and writes its page: the one rebuild a build and a refresh share.
+    The registered path must still be the top of a repository; git would otherwise read the history
+    of a folder above it (an emptied submodule's parent).
+    """
+    code, top, _ = run_git(path, 'rev-parse', '--show-toplevel')
+    if code != 0 or top.strip() != path:
+        raise Failure('{} is no longer a Git repository; run {} again.'.format(label, rerun))
     graph = load_graph(label, path)
     if not graph['commits']:
         raise Failure('{} has no commits.'.format(label))
+    file = os.path.join(directory, key + '.html')
+    write_atomically(file, build_page(graph, time.strftime('%d/%m/%Y, %H:%M'), key, prompt, rerun))
 
+    return file, graph
+
+
+def build(arguments):
+    prompt = read_prompt(arguments.prompt)
+    label, path = resolve_target(os.path.abspath(os.path.expanduser(arguments.repo)), arguments.submodule)
     directory = os.path.abspath(os.path.expanduser(arguments.out))
     os.makedirs(directory, exist_ok=True)
-    key = re.sub(r'[^\w.-]+', '-', label, flags=re.ASCII)
-    file = os.path.join(directory, key + '.html')
-    register_repository(directory, key, path)
-    generated_at = time.strftime('%d/%m/%Y, %H:%M')
-    write_atomically(file, build_page(graph, generated_at, key, prompt, arguments.rerun))
+    key = slug(label)
+    with key_lock(directory, key):
+        file, graph = render_page(directory, key, label, path, prompt, arguments.rerun)
+        write_atomically(sidecar_path(directory, key),
+                         json.dumps({'label': label, 'path': path, 'prompt': prompt, 'rerun': arguments.rerun}, indent=2))
+        register_repository(directory, key, path)
 
     return {
         'file': file,
@@ -1376,7 +1655,7 @@ def changes(path, commit):
         return {'error': 'unknown commit'}
     base = parents[1] if len(parents) > 1 else EMPTY_TREE
     files = []
-    tokens = helper_git(path, 'diff', '--name-status', '-M', '-z', base, commit).split('\0')
+    tokens = helper_git(path, 'diff', '--no-textconv', '--no-ext-diff', '--name-status', '-M', '-z', base, commit).split('\0')
     index = 0
     while index < len(tokens) and tokens[index]:
         code = tokens[index]
@@ -1386,14 +1665,14 @@ def changes(path, commit):
         else:
             files.append({'status': code[0], 'from': None, 'path': tokens[index + 1]})
             index += 2
-    tokens = helper_git(path, 'diff', '--numstat', '-M', '-z', base, commit).split('\0')
+    tokens = helper_git(path, 'diff', '--no-textconv', '--no-ext-diff', '--numstat', '-M', '-z', base, commit).split('\0')
     index = 0
     stats = []
     while index < len(tokens) and tokens[index]:
         added, deleted, name = tokens[index].split('\t', 2)
         index += 3 if name == '' else 1
         stats.append((added, deleted))
-    patch = helper_git(path, 'diff', '-M', '--no-color', '--no-ext-diff', base, commit)
+    patch = helper_git(path, 'diff', '-M', '--no-color', '--no-textconv', '--no-ext-diff', base, commit)
     chunks = re.split(r'^diff --git ', patch, flags=re.M)[1:]
     spent = 0
     for position, entry in enumerate(files):
@@ -1433,8 +1712,8 @@ def read_history(path):
     old one), newest first, leaving out the stash as the page does; and the paths at HEAD. Git
     separates both with NUL characters, so every file name arrives exactly as it is.
     """
-    output = helper_git(path, 'log', '-z', '--exclude=refs/stash', '--all', '--diff-merges=first-parent',
-                        '--name-status', '-M', '--format=%x1e%H')
+    output = helper_git(path, 'log', '-z', '--no-textconv', '--no-ext-diff', '--exclude=refs/stash', '--all',
+                        '--diff-merges=first-parent', '--name-status', '-M', '--format=%x1e%H')
     commits = []
     for record in output.split('\x1e')[1:]:
         tokens = record.split('\0')
@@ -1511,6 +1790,49 @@ def list_paths(commits, at_head, needle):
     }
 
 
+def refresh(helper, key, page):
+    """
+    Rebuilds a page from the details its last build recorded (never from the request, so the
+    latest /gitgraph run's session keeps add-to-prompt). Answers (status, body). A click that waited
+    for the lock gets the result of a rebuild that started after it arrived, rather than another.
+
+    The request ({"repo", "page"}) and the answers are a contract every later helper keeps: pages
+    show the button for any helper from version 6 up.
+    """
+    path = helper.registration(key)
+    if path is None:
+        return 404, {'error': 'This page is not registered with the gitgraph helper.', 'reason': 'not-registered'}
+    if not os.path.isdir(path):
+        return 410, {'error': 'The repository was moved or deleted.', 'reason': 'gone'}
+    if page > version_number(VERSION):
+        return 409, {'error': 'The gitgraph helper running now is older than this page.', 'reason': 'older-helper'}
+    arrived = time.monotonic()
+    with key_lock(helper.root, key):
+        last = helper.rebuilt.get(key)
+        if last is not None and last[0] >= arrived:
+            return last[1]
+        details = read_sidecar(helper.root, key)
+        if details is None:
+            return 409, {'error': 'This page was built by an older gitgraph.', 'reason': 'no-details'}
+        started = time.monotonic()
+        try:
+            _, graph = render_page(helper.root, key, details['label'], path, details.get('prompt'), details['rerun'])
+            answer = (200, {'commits': len(graph['commits']), 'isTruncated': graph['isTruncated']})
+        except Failure as failure:
+            answer = (200, {'error': str(failure)})
+        except (OSError, subprocess.SubprocessError) as error:
+            answer = (200, {'error': 'gitgraph could not run git: {}'.format(error)})
+        helper.rebuilt[key] = (started, answer)
+    if 'error' not in answer[1]:
+        with helper.lock:
+            history = helper.histories.get(key)
+        if history is not None:
+            with history.lock:
+                history.read_at = 0
+
+    return answer
+
+
 class Helper(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -1521,15 +1843,26 @@ class Helper(ThreadingMixIn, HTTPServer):
         self.lock = threading.Lock()
         self.last_seen = time.time()
         self.histories = {}
+        self.rebuilt = {}
 
-    def registered(self, key):
+    @property
+    def port(self):
+        return self.server_address[1]
+
+    def registration(self, key):
+        """The path repos.json registers for `key`, whether or not it still exists, or None."""
         try:
             with open(os.path.join(self.root, 'repos.json'), encoding='utf-8') as handle:
                 path = json.load(handle).get(key)
         except Exception:
             return None
 
-        return path if isinstance(path, str) and os.path.isdir(path) else None
+        return path if isinstance(path, str) else None
+
+    def registered(self, key):
+        path = self.registration(key)
+
+        return path if path is not None and os.path.isdir(path) else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1552,14 +1885,43 @@ class Handler(BaseHTTPRequestHandler):
 
         return self.reply(200, body, 'application/json')
 
+    def is_own_host(self):
+        """The request names this helper as its host, so no other site's name points here."""
+        port = self.server.port
+
+        return self.headers.get('Host') in ('127.0.0.1:{}'.format(port), 'localhost:{}'.format(port))
+
+    def is_own_page(self):
+        """The request comes from a page this helper serves. It stops browsers, not local processes."""
+        port = self.server.port
+
+        return self.headers.get('Origin') in ('http://127.0.0.1:{}'.format(port), 'http://localhost:{}'.format(port))
+
+    def read_body(self):
+        """The request body as JSON, or None when it is missing, too large or not JSON."""
+        try:
+            length = int(self.headers.get('Content-Length', 0) or 0)
+        except ValueError:
+            return None
+        if length <= 0 or length > 65536:
+            return None
+        try:
+            return json.loads(self.rfile.read(length))
+        except ValueError:
+            return None
+
     def do_GET(self):
         helper = self.server
         helper.last_seen = time.time()
+        if not self.is_own_host():
+            return self.reply(403, b'forbidden')
         url = urlparse(self.path)
         query = parse_qs(url.query)
         if url.path == '/ping':
             return self.reply(200, VERSION.encode())
         if url.path == '/quit':
+            if self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin'):
+                return self.reply(403, b'forbidden')
             self.reply(200, b'bye')
             threading.Thread(target=helper.shutdown).start()
             return
@@ -1594,11 +1956,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         helper = self.server
         helper.last_seen = time.time()
-        if urlparse(self.path).path != '/prompt':
+        route = urlparse(self.path).path
+        if route not in ('/prompt', '/refresh'):
             return self.reply(404)
-        length = min(int(self.headers.get('Content-Length', 0) or 0), 65536)
+        if not self.is_own_host() or not self.is_own_page():
+            return self.reply(403, b'{"error":"forbidden"}', 'application/json')
+        data = self.read_body()
+        if route == '/refresh':
+            key = data.get('repo') if isinstance(data, dict) else None
+            page = data.get('page') if isinstance(data, dict) else None
+            if not isinstance(key, str) or not key or isinstance(page, bool) or not isinstance(page, int):
+                return self.reply(400, b'{"error":"bad request"}', 'application/json')
+            status, body = refresh(helper, key, page)
+            return self.reply(status, json.dumps(body).encode(), 'application/json')
         try:
-            data = json.loads(self.rfile.read(length))
             key = (str(data['session']), str(data['token']))
             text = str(data['text'])[:4000]
         except Exception:
