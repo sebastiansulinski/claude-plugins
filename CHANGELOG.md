@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-10-05
+
+### Added
+
+- **`gitgraph` Refresh button** (Claude Code 1.4.0, Codex 1.3.0). The page's header has a Refresh
+  button whenever the helper serves it: the helper rebuilds the page from the repository's current
+  history, with the details of the last `/gitgraph` run (so add-to-prompt keeps going to the latest
+  session), and the page reloads with what was in view: the selected commit with its details, tab
+  and file, find (mode, text, picked file and position), the picked branch, remote or tag, the
+  sidebar, and the scroll position (the very top stays at the top, so new commits show). No model
+  turn, in either host. An open page pings the helper every five minutes, so it no longer stops
+  under an open page.
+
+### Changed
+
+- The helper (now `gitgraph-server-6`) answers only its own pages: every request must name
+  `127.0.0.1` or `localhost` on its port as its host, POSTs (refresh and add-to-prompt) must come
+  from a page it served, and `/quit` refuses requests from other sites. Before, any website could
+  fill the add-to-prompt queue, read a page with its session token through a rebinding name, or stop
+  the helper.
+- Every `git` call runs with `--no-textconv`, `--no-ext-diff`, `core.fsmonitor=false` and no
+  `diff.external`, so a repository's own configuration cannot make the helper run a program; this
+  matters in Codex, whose helper runs outside the sandbox.
+- The helper's version is now also the page's revision, and a test records a fingerprint of the
+  page's code under it, so a helper never rebuilds a page with older page code, and `ensure`
+  replaces an older helper. Builds and refreshes of one page take a lock shared across processes,
+  and every file is written through a temporary file of its own.
+
 ## [1.11.0] - 2026-10-04
 
 ### Added
