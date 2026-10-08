@@ -1,4 +1,3 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { BuildResult, EnsureResult } from '../types'
@@ -10,7 +9,10 @@ const PYTHON_MISSING =
   'gitgraph needs Python 3 to build the page, and python3 was not found. ' +
   'On macOS, install the command line tools (xcode-select --install); elsewhere, install python3.'
 
-const bridgeToken = atom({ plugin: 'gitgraph', key: 'token' } as const, '')
+// The token this session's pages carry for "add to prompt", kept in session state so a reload of
+// this module still reaches pages opened before it. Read and written with $.state directly: the
+// validator follows $ only into functions declared in this file, not into imported helpers.
+const BRIDGE_TOKEN = { plugin: 'gitgraph', key: 'token' } as const
 
 /**
  * Runs the gitgraph runtime (gitgraph/runtime/gitgraph.py, written beside the pages): it
@@ -136,7 +138,7 @@ async function startPolling($: EngineInterface): Promise<void> {
         pendingPane = null
         await askToOpenInPane($, url)
       }
-      const token = await read($, bridgeToken)
+      const { value: token } = await $.state.get(BRIDGE_TOKEN)
       if (token) {
         await collect($, session, token)
       }
@@ -179,10 +181,13 @@ export const register: Register = on => {
       return { text: PYTHON_MISSING }
     }
     const isServed = 'isUp' in ensured && ensured.isUp
-    let token = await read($, bridgeToken)
+    const stored = await $.state.get(BRIDGE_TOKEN)
+    let token = stored.value ?? ''
     if (!token) {
-      token = randomToken()
-      await update($, bridgeToken, () => token)
+      // Written only if nothing was written since the read: two runs at once keep one token.
+      const fresh = randomToken()
+      const written = await $.state.set(BRIDGE_TOKEN, fresh, { ifVersion: stored.version })
+      token = written.isSet ? fresh : ((await $.state.get(BRIDGE_TOKEN)).value ?? fresh)
     }
     const prompt = JSON.stringify({ session: await $.session.id(), token })
     const built = await runRuntime<BuildResult>(
