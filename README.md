@@ -250,6 +250,15 @@ the same Python runtime, so they need Python 3 (on macOS it comes with the comma
 
 - **History:** every commit on every branch, remote, and tag, newest first, in one scroll, with
   each line of development in its own colour.
+- **Uncommitted changes:** every worktree of the repository with work not yet committed (the
+  folder you ran it from, linked worktrees, detached ones) gets a row of its own, placed directly
+  above the commit that folder is on and joined to it by a dashed line, with a count such as
+  "2 staged · 3 not staged · 1 new". An **Uncommitted** section in the sidebar lists those folders.
+  Click a row for its folder and branch; its Changes tab reads the folder live and shows each file
+  labelled staged, not staged, both, new or conflicted, with the staged and not staged parts of
+  its diff apart, so a staged change you have since edited back stays visible. Find, branch focus
+  and Refresh treat these rows like commits. On a superproject's page, a submodule counts only
+  when its recorded commit has moved; edits inside it show on the submodule's own page.
 - **Sidebar:** branches, remotes, and tags as folder trees. Click one to jump to its latest commit
   and dim everything outside its history; right-click to copy its full name or add it to the prompt.
 - **Find:** the whole history stays in view; matching commits stay at full strength and the rest
@@ -285,6 +294,11 @@ The helper answers only its own pages: requests must name `127.0.0.1` or `localh
 and refreshes and add-to-prompt must come from a page it served. That stops other websites, not
 other programs on your machine. It trusts the repositories it has registered and runs `git` in
 them, with the options that stop a repository's own configuration from running programs.
+Reading uncommitted changes also switches off every filter the repository configures (such as
+Git LFS's), since `git status` and diffs against a folder would otherwise run them; a file stored
+through such a filter is then compared as it sits in the folder, and the page says filters were
+not run. It reads without taking Git's optional locks, so it never rewrites a worktree's index
+while someone works in it.
 
 **In Codex** the skill builds the page into `/tmp/gitgraph` and serves it from its own helper on
 `127.0.0.1:47322`, so it never touches Claude Code's. Codex's sandbox does not let a command listen

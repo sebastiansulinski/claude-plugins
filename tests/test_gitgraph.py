@@ -23,6 +23,7 @@ import time
 import unittest
 from types import SimpleNamespace
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
@@ -31,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # fingerprint: add a new entry under the next number and raise VERSION to it; never edit an entry.
 PAGE_FINGERPRINTS = {
     6: "7309c674c069799b9ffec6a821d10ea83e51d0f0387965458952254d08a9a5fb",
+    7: "fd396a94311cc0d89cece3e2c7b23c032f9e4c0b9954f0700d3ab4625d74e12c",
 }
 RUNTIME = ROOT / "gitgraph/runtime/gitgraph.py"
 CHROME_CANDIDATES = (
@@ -230,6 +232,261 @@ class HistoryTest(Fixture):
         })
 
 
+class WorkingFixture(Fixture):
+    """A repository whose worktrees hold every kind of uncommitted change."""
+
+    def commit_all(self, repository, message):
+        self.git(repository, "add", "-A")
+        self.git(repository, "commit", "-qm", message)
+
+    def working_fixture(self):
+        """
+        main: Base (a-d.txt), Main work (e.txt); feature: Feature work (f.txt). The main checkout holds
+        staged (a), not staged (b), both (c), staged then reverted (d) and new files (new.txt, a new
+        folder of two). Linked worktrees: feature (one edit), clean (none), detached-one and
+        detached-two (both on Base, one new file each), deleted (its folder removed).
+        """
+        repository = self.workspace / "project"
+        repository.mkdir()
+        self.git(repository, "init", "-q", "-b", "main")
+        for name in "abcd":
+            (repository / f"{name}.txt").write_text(f"{name} one\n")
+        self.commit_all(repository, "Base")
+        self.git(repository, "switch", "-qc", "feature")
+        (repository / "f.txt").write_text("f one\n")
+        self.commit_all(repository, "Feature work")
+        self.git(repository, "switch", "-q", "main")
+        (repository / "e.txt").write_text("e one\n")
+        self.commit_all(repository, "Main work")
+        base = self.git(repository, "rev-parse", "main~1")
+
+        (repository / "a.txt").write_text("a two\n")
+        self.git(repository, "add", "a.txt")
+        (repository / "b.txt").write_text("b two\n")
+        (repository / "c.txt").write_text("c two\n")
+        self.git(repository, "add", "c.txt")
+        (repository / "c.txt").write_text("c three\n")
+        (repository / "d.txt").write_text("d two\n")
+        self.git(repository, "add", "d.txt")
+        (repository / "d.txt").write_text("d one\n")
+        (repository / "new.txt").write_text("brand new\n")
+        (repository / "newdir" / "sub").mkdir(parents=True)
+        (repository / "newdir" / "x.txt").write_text("x\n")
+        (repository / "newdir" / "sub" / "deep-name.txt").write_text("deep\n")
+
+        trees = {}
+        for name, arguments in (
+            ("feature", ["feature"]),
+            ("clean", ["-b", "clean", "main~1"]),
+            ("detached-one", ["--detach", base]),
+            ("detached-two", ["--detach", base]),
+            ("deleted", ["-b", "deleted", "main"]),
+        ):
+            trees[name] = self.workspace / f"project-{name}"
+            self.git(repository, "worktree", "add", "-q", str(trees[name]), *arguments)
+        (trees["feature"] / "f.txt").write_text("f two\n")
+        (trees["detached-one"] / "one.txt").write_text("one\n")
+        (trees["detached-two"] / "two.txt").write_text("two\n")
+        shutil.rmtree(trees["deleted"])
+        return repository, trees
+
+    def working_rows(self, data):
+        return [commit for commit in data["commits"] if commit.get("isWorking")]
+
+
+class WorkingTest(WorkingFixture):
+    """Uncommitted changes: one row per worktree with uncommitted work, placed on the commit it is on."""
+
+    def test_rows_sit_above_their_commit_with_counts_and_labels(self):
+        repository, trees = self.working_fixture()
+        built = self.run_runtime("build", "--repo", repository, "--out", self.workspace / "pages")
+        self.assertEqual(built["commits"], 3, "the build answer counts commits only")
+        html = Path(built["file"]).read_text()
+        self.assertIn(">3 commits ", html)
+        self.assertIn("4 folders with uncommitted changes", html)
+        data, *_ = page_data(html)
+        rows = self.working_rows(data)
+        self.assertEqual(len(rows), 4)
+        by_folder = {row["folder"]: row for row in rows}
+        self.assertEqual(set(by_folder), {str(repository), str(trees["feature"]), str(trees["detached-one"]),
+                                          str(trees["detached-two"])})
+
+        heads = {commit["subject"]: commit for commit in data["commits"] if not commit.get("isWorking")}
+        for folder, subject in ((str(repository), "Main work"), (str(trees["feature"]), "Feature work"),
+                                (str(trees["detached-one"]), "Base"), (str(trees["detached-two"]), "Base")):
+            row = by_folder[folder]
+            head = heads[subject]
+            self.assertEqual(row["head"], head["fullHash"])
+            self.assertLess(row["row"], head["row"])
+            between = data["commits"][row["row"] + 1:head["row"]]
+            self.assertTrue(all(commit.get("isWorking") for commit in between), "only working rows sit between")
+            edges = [edge for edge in data["edges"] if edge["childRow"] == row["row"]]
+            self.assertEqual([(edge["parentRow"], edge["parentLane"]) for edge in edges], [(head["row"], head["lane"])])
+
+        main = by_folder[str(repository)]
+        self.assertEqual(main["subject"], "Uncommitted changes · this folder")
+        self.assertEqual(main["branch"], "main")
+        self.assertEqual(main["counts"], {"staged": 3, "notStaged": 3, "new": 3, "conflicted": 0})
+        self.assertEqual(main["stats"]["files"], 7)
+        self.assertEqual(main["author"], "3 staged · 3 not staged · 3 new")
+        self.assertIn("newdir/sub/deep-name.txt", main["paths"])
+        self.assertEqual(main["refs"], [{"label": "main", "kind": "working"}])
+        self.assertEqual((main["branches"], main["remotes"], main["tags"], main["isHead"]), ([], [], [], False))
+        feature = by_folder[str(trees["feature"])]
+        self.assertEqual(feature["subject"], "Uncommitted changes · project-feature")
+        self.assertEqual(feature["counts"], {"staged": 0, "notStaged": 1, "new": 0, "conflicted": 0})
+        self.assertIsNone(by_folder[str(trees["detached-one"])]["branch"])
+        self.assertEqual(by_folder[str(trees["detached-one"])]["refs"], [{"label": "detached", "kind": "working"}])
+
+        identities = [row["fullHash"] for row in rows]
+        self.assertEqual(len(set(identities)), 4)
+        self.assertTrue(all(re.fullmatch(r"worktree:[0-9a-f]{16}", identity) for identity in identities))
+        again, *_ = page_data(Path(self.run_runtime("build", "--repo", repository, "--out", self.workspace / "pages")["file"]).read_text())
+        self.assertEqual(sorted(row["fullHash"] for row in self.working_rows(again)), sorted(identities), "identities are stable")
+
+        trees_listed = {tree["folder"]: tree for tree in data["trees"]}
+        self.assertIn(str(trees["clean"]), trees_listed, "clean worktrees are listed for the page, without a row")
+        self.assertNotIn(str(trees["deleted"]), trees_listed)
+        self.assertEqual(trees_listed[str(trees["clean"])]["head"], heads["Base"]["fullHash"])
+
+    def test_no_rows_when_every_worktree_is_clean(self):
+        repository = self.history()
+        built = self.run_runtime("build", "--repo", repository, "--out", self.workspace / "pages")
+        html = Path(built["file"]).read_text()
+        data, *_ = page_data(html)
+        self.assertEqual(self.working_rows(data), [])
+        header = re.search(r"<header>.*?</header>", html, re.S).group(0)
+        self.assertNotIn("uncommitted", header)
+
+    def test_an_unreadable_worktree_still_shows_a_row(self):
+        repository, trees = self.working_fixture()
+        marker = trees["feature"] / ".git"
+        original = marker.read_text()
+        marker.write_text("gitdir: /nowhere/at/all\n")
+        self.addCleanup(marker.write_text, original)
+        data, *_ = page_data(Path(self.run_runtime("build", "--repo", repository, "--out", self.workspace / "pages")["file"]).read_text())
+        row = next(row for row in self.working_rows(data) if row["folder"] == str(trees["feature"]))
+        self.assertTrue(row["isUnread"])
+        self.assertEqual(row["author"], "could not be read")
+
+    def test_submodules_on_their_own_page_and_on_the_superproject(self):
+        repository = self.history()
+        parent = self.workspace / "parent"
+        parent.mkdir()
+        self.git(parent, "init", "-q", "-b", "main")
+        self.git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(repository), "libs/project")
+        self.git(parent, "commit", "-qm", "Add submodule")
+        inside = parent / "libs" / "project"
+        (inside / "new.txt").write_text("edited inside the submodule\n")
+
+        own, *_ = page_data(Path(self.run_runtime("build", "--repo", parent, "--submodule", "project",
+                                                  "--out", self.workspace / "pages")["file"]).read_text())
+        self.assertEqual([row["folder"] for row in self.working_rows(own)], [str(inside)],
+                         "the submodule's checkout, not its folder under .git/modules")
+        self.assertEqual(self.working_rows(own)[0]["subject"], "Uncommitted changes · this folder")
+
+        # With per-worktree configuration switched on, git keeps the checkout's location in config.worktree.
+        modules = Path(self.git(inside, "rev-parse", "--absolute-git-dir"))
+        location = self.git(inside, "config", "--file", str(modules / "config"), "--get", "core.worktree")
+        self.git(inside, "config", "--file", str(modules / "config"), "--unset", "core.worktree")
+        self.git(inside, "config", "--file", str(modules / "config"), "extensions.worktreeConfig", "true")
+        self.git(inside, "config", "--file", str(modules / "config.worktree"), "core.worktree", location)
+        moved, *_ = page_data(Path(self.run_runtime("build", "--repo", parent, "--submodule", "project",
+                                                    "--out", self.workspace / "pages")["file"]).read_text())
+        self.assertEqual([row["folder"] for row in self.working_rows(moved)], [str(inside)],
+                         "the checkout is found when its location is in config.worktree")
+
+        parent_page, *_ = page_data(Path(self.run_runtime("build", "--repo", parent, "--out", self.workspace / "pages")["file"]).read_text())
+        self.assertEqual(self.working_rows(parent_page), [], "edits inside a submodule belong to its own page")
+
+        self.git(inside, "commit", "-qam", "Move the submodule on")
+        parent_page, *_ = page_data(Path(self.run_runtime("build", "--repo", parent, "--out", self.workspace / "pages")["file"]).read_text())
+        rows = self.working_rows(parent_page)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["paths"], ["libs/project"])
+
+
+class WorkingChangesTest(WorkingFixture):
+    """GET /working: one worktree's uncommitted files, read live, each with its staged and not staged parts."""
+
+    def ask(self, port, key, folder):
+        url = f"http://127.0.0.1:{port}/working?repo={quote(key)}&folder={quote(str(folder))}"
+        try:
+            with urlopen(url, timeout=30) as response:
+                return response.status, json.loads(response.read())
+        except HTTPError as error:
+            return error.code, json.loads(error.read() or b"null")
+
+    def served(self, repository):
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        return port, self.run_runtime("build", "--repo", repository, "--out", root)["key"]
+
+    def test_files_labels_and_parts(self):
+        repository, trees = self.working_fixture()
+        (repository / "picture.bin").write_bytes(b"\x00\x01\x02 not text\n")
+        (repository / "long.txt").write_text("".join(f"line {number}\n" for number in range(self.runtime.FILE_LINES + 10)))
+        port, key = self.served(repository)
+        status, answer = self.ask(port, key, repository)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual(answer["folder"], str(repository))
+        files = {file["path"]: file for file in answer["files"]}
+        self.assertEqual(set(files), {"a.txt", "b.txt", "c.txt", "d.txt", "new.txt", "newdir/x.txt",
+                                      "newdir/sub/deep-name.txt", "picture.bin", "long.txt"})
+
+        self.assertEqual((files["a.txt"]["label"], files["a.txt"]["status"]), ("staged", "M"))
+        self.assertIn("+a two", files["a.txt"]["staged"]["hunks"])
+        self.assertIsNone(files["a.txt"]["unstaged"])
+        self.assertEqual(files["b.txt"]["label"], "not staged")
+        self.assertIsNone(files["b.txt"]["staged"])
+        self.assertIn("+b two", files["b.txt"]["unstaged"]["hunks"])
+        self.assertEqual(files["c.txt"]["label"], "staged and not staged")
+        self.assertIn("+c two", files["c.txt"]["staged"]["hunks"])
+        self.assertIn("+c three", files["c.txt"]["unstaged"]["hunks"])
+
+        reverted = files["d.txt"]
+        self.assertEqual(reverted["label"], "staged and not staged", "staged, then edited back to its committed content")
+        self.assertIn("+d two", reverted["staged"]["hunks"], "the staged change stays visible")
+        self.assertIn("-d two", reverted["unstaged"]["hunks"])
+
+        new = files["new.txt"]
+        self.assertEqual((new["label"], new["status"]), ("new", "A"))
+        self.assertIsNone(new["staged"])
+        self.assertTrue(new["unstaged"]["hunks"].startswith("@@ -0,0 +1 @@\n+brand new"))
+        self.assertEqual((new["unstaged"]["added"], new["unstaged"]["deleted"]), (1, 0))
+        self.assertTrue(files["picture.bin"]["unstaged"]["binary"])
+        self.assertTrue(files["long.txt"]["unstaged"]["truncated"])
+        self.assertEqual(files["long.txt"]["unstaged"]["added"], self.runtime.FILE_LINES + 10)
+
+    def test_a_conflict_and_refusals(self):
+        repository, trees = self.working_fixture()
+        conflict = self.workspace / "project-conflict"
+        self.git(repository, "worktree", "add", "-q", "-b", "left", str(conflict), "main~1")
+        self.git(repository, "branch", "right", "main~1")
+        right = self.workspace / "project-right"
+        self.git(repository, "worktree", "add", "-q", str(right), "right")
+        (right / "a.txt").write_text("a right\n")
+        self.commit_all(right, "Right")
+        (conflict / "a.txt").write_text("a left\n")
+        self.commit_all(conflict, "Left")
+        merged = subprocess.run(["git", "merge", "-q", "right"], cwd=conflict, env=self.environment, capture_output=True)
+        self.assertNotEqual(merged.returncode, 0, "the fixture merge conflicts")
+
+        port, key = self.served(repository)
+        status, answer = self.ask(port, key, conflict)
+        self.assertEqual(status, 200, answer)
+        conflicted = {file["path"]: file for file in answer["files"]}["a.txt"]
+        self.assertEqual((conflicted["label"], conflicted["status"]), ("conflicted", "U"))
+        self.assertIn("<<<<<<<", conflicted["unstaged"]["raw"])
+
+        self.assertEqual(self.ask(port, key, self.workspace)[0], 404, "a folder that is not one of its worktrees")
+        self.assertEqual(self.ask(port, key, trees["clean"].parent / "elsewhere")[0], 404)
+        self.assertEqual(self.ask(port, "nothing", repository)[0], 404, "an unknown repository")
+        with self.assertRaises(HTTPError) as missing:
+            urlopen(f"http://127.0.0.1:{port}/working?repo={key}", timeout=30)
+        self.assertEqual(missing.exception.code, 404)
+
+
 class FilePathsTest(Fixture):
     """The helper's list of file paths, and its filter by one exact path, read file names literally."""
 
@@ -412,7 +669,8 @@ class RefreshTest(Fixture):
         port = self.start_helper(root)
         built = self.built(repository, root)
         self.assertEqual(self.post(port, "/refresh", {"repo": "nothing", "page": 6})[0], 404)
-        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 7})[0], 409, "a newer page")
+        newer = self.runtime.version_number(self.runtime.VERSION) + 1
+        self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": newer})[0], 409, "a newer page")
         self.assertEqual(self.post(port, "/refresh", b"not json")[0], 400)
         self.assertEqual(self.post(port, "/refresh", {"repo": built["key"]})[0], 400)
         self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6, "pad": "x" * 70000})[0], 400)
@@ -612,17 +870,50 @@ class RefreshTest(Fixture):
         self.assertTrue(marker.exists(), "the fixture's driver runs when git is not told otherwise")
         marker.unlink()
 
+        # Reading uncommitted changes passes files through the repository's filters: a clean filter
+        # (with its smudge) on the text files, a long-running process filter on the notes.
+        (repository / "notes.md").write_text("notes\n")
+        self.git(repository, "add", "notes.md")
+        self.git(repository, "commit", "-qm", "Add notes")
+        filtered = {kind: self.workspace / f"ran-{kind}" for kind in ("clean", "smudge", "process")}
+        self.git(repository, "config", "filter.evilclean.clean", f"touch '{filtered['clean']}'; cat")
+        self.git(repository, "config", "filter.evilclean.smudge", f"touch '{filtered['smudge']}'; cat")
+        self.git(repository, "config", "filter.evilprocess.process", f"touch '{filtered['process']}'")
+        (repository / ".gitattributes").write_text("*.txt diff=marker filter=evilclean\n*.md filter=evilprocess\n")
+        (repository / "new.txt").write_text("uncommitted text\n")
+        (repository / "notes.md").write_text("uncommitted notes\n")
+        subprocess.run(["git", "status", "--porcelain"], cwd=repository, env=self.environment, capture_output=True)
+        subprocess.run(["git", "diff"], cwd=repository, env=self.environment, capture_output=True)
+        self.assertTrue(filtered["clean"].exists() and filtered["process"].exists(),
+                        "the fixture's filters run when git is not told otherwise")
+        for one in filtered.values():
+            one.unlink(missing_ok=True)
+
         root = self.workspace / "pages"
         port = self.start_helper(root)
         built = self.built(repository, root)
         head = self.git(repository, "rev-parse", "HEAD")
         base = f"http://127.0.0.1:{port}"
         for path in (f"/changes?repo={built['key']}&hash={head}", f"/touching?repo={built['key']}&q=new",
-                     f"/paths?repo={built['key']}&q=new"):
+                     f"/paths?repo={built['key']}&q=new", f"/working?repo={built['key']}&folder={quote(str(repository))}"):
             with urlopen(base + path) as response:
                 response.read()
         self.assertEqual(self.post(port, "/refresh", {"repo": built["key"], "page": 6})[0], 200)
         self.assertFalse(marker.exists())
+        self.assertEqual([kind for kind, one in filtered.items() if one.exists()], [], "no filter ran")
+
+        # A filter marked as required is switched off as well, and the page says filters were not run.
+        self.git(repository, "config", "filter.evilclean.required", "true")
+        self.git(repository, "config", "filter.evilprocess.required", "true")
+        data, *_ = page_data(Path(self.built(repository, root)["file"]).read_text())
+        row = next(commit for commit in data["commits"] if commit.get("isWorking"))
+        self.assertTrue(row["filtersOff"])
+        self.assertEqual(row["counts"]["notStaged"], 3, "new.txt, notes.md and .gitattributes")
+        with urlopen(base + f"/working?repo={built['key']}&folder={quote(str(repository))}") as response:
+            answer = json.loads(response.read())
+        self.assertTrue(answer["filtersOff"])
+        self.assertEqual({file["path"] for file in answer["files"]}, {"new.txt", "notes.md", ".gitattributes"})
+        self.assertEqual([kind for kind, one in filtered.items() if one.exists()], [], "no required filter ran")
 
 
 class HelperTest(Fixture):
@@ -923,7 +1214,10 @@ class RefreshPageTest(Fixture):
         tip = self.git(repository, "commit-tree", "-p", "HEAD", "-m", "Only on gone", f"{self.git(repository, 'rev-parse', 'HEAD')}^{{tree}}")
         self.git(repository, "branch", "gone", tip)
         chrome.evaluate("window.beforeRefresh = true; document.getElementById('refresh').click()")
-        chrome.wait("!window.beforeRefresh && document.querySelector('#refs .leaf[data-name=\"gone\"]') !== null")
+        # Wait for the restore to finish (it reopens the composer.json change) before clicking, or its late
+        # selection lands on top of the click.
+        chrome.wait("!window.beforeRefresh && document.querySelector('#refs .leaf[data-name=\"gone\"]') !== null && "
+                    "(document.querySelector('#detail .files .file.on') || {}).title === 'composer.json'")
         chrome.evaluate("document.querySelector('#refs .leaf[data-name=\"gone\"]').click()")
         chrome.evaluate("document.querySelector('#list .r.sel .s').click()")
         chrome.wait("!document.getElementById('detail').hidden")
@@ -935,6 +1229,90 @@ class RefreshPageTest(Fixture):
         self.assertIsNone(gone["leaf"])
         self.assertIsNone(gone["selected"])
         self.assertFalse(gone["isDetailOpen"])
+        self.assertEqual(chrome.errors, [])
+
+
+@unittest.skipUnless(CHROME, "needs Google Chrome or Chromium (set GITGRAPH_TEST_CHROME)")
+class WorkingPageTest(WorkingFixture):
+    """The page shows each folder's uncommitted work as a row, opens it, finds it, and keeps it across a refresh."""
+
+    STATE = """JSON.stringify((function () {
+      var selected = document.querySelector('#list .r.sel');
+      var c = selected ? DATA.commits[Number(selected.getAttribute('data-row'))] : null;
+      return {
+        selected: c ? c.fullHash : null,
+        selectedFolder: c && c.isWorking ? c.folder : null,
+        isDetailOpen: !document.getElementById('detail').hidden,
+        working: DATA.commits.filter(function (one) { return one.isWorking; }).map(function (one) { return [one.folder, one.stats.files]; }),
+        leaves: Array.prototype.map.call(document.querySelectorAll('#refs .leaf[data-kind="working"]'), function (leaf) { return leaf.getAttribute('data-name'); })
+      };
+    })())"""
+
+    def row_of(self, chrome, folder):
+        return chrome.evaluate(f"DATA.commits.filter(function (c) {{ return c.folder === {json.dumps(str(folder))}; }})[0].row")
+
+    def refresh(self, chrome):
+        chrome.evaluate("window.beforeRefresh = true; document.getElementById('refresh').click()")
+        chrome.wait("!window.beforeRefresh && document.documentElement.getAttribute('data-refresh') === 'on'")
+        time.sleep(1.5)
+
+    def test_rows_details_changes_find_and_refresh(self):
+        repository, trees = self.working_fixture()
+        root = self.workspace / "pages"
+        port = self.start_helper(root)
+        built = self.run_runtime("build", "--repo", repository, "--out", root, "--rerun", "/gitgraph")
+        chrome = Chrome(self, f"http://127.0.0.1:{port}/{built['key']}.html")
+        chrome.wait("document.documentElement.getAttribute('data-refresh') === 'on'")
+
+        state = json.loads(chrome.evaluate(self.STATE))
+        self.assertEqual(len(state["working"]), 4)
+        self.assertEqual(sorted(state["leaves"]), sorted(folder for folder, _ in state["working"]))
+        self.assertEqual(chrome.evaluate("document.querySelectorAll('#list path.w').length"), 4, "one dashed line each")
+
+        main = self.row_of(chrome, repository)
+        chrome.evaluate(f"document.querySelector('#list .r[data-row=\"{main}\"] .s').click()")
+        chrome.wait("!document.getElementById('detail').hidden")
+        self.assertIn(str(repository), chrome.evaluate("document.querySelector('#detail .meta').textContent"))
+        chrome.evaluate("document.querySelector('#detail .tabs [data-tab=\"changes\"]').click()")
+        chrome.wait("document.querySelectorAll('#detail .files .file').length === 7")
+        chrome.evaluate("Array.prototype.filter.call(document.querySelectorAll('#detail .files .file'), function (f) { return f.title === 'd.txt'; })[0].click()")
+        chrome.wait("document.querySelector('#detail .diff .dh') && document.querySelector('#detail .diff .dh').textContent.indexOf('d.txt') >= 0")
+        parts = chrome.evaluate("Array.prototype.map.call(document.querySelectorAll('#detail .diff .part'), function (p) { return p.textContent; })")
+        self.assertEqual(parts, ["Staged", "Not staged"], "a staged change edited back stays visible")
+        self.assertIn("As it is now", chrome.evaluate("document.querySelector('#detail .files .note').textContent"))
+
+        chrome.evaluate("""(function () {
+          document.querySelector('[data-mode="files"]').click();
+          var find = document.getElementById('find');
+          find.value = 'deep-name';
+          find.dispatchEvent(new Event('input'));
+        })()""")
+        chrome.wait("document.getElementById('count').textContent === '1 commit'")
+        self.assertFalse(chrome.evaluate(f"document.querySelector('#list .r[data-row=\"{main}\"]').classList.contains('miss')"),
+                         "the uncommitted row is found by a new file's name")
+        chrome.evaluate("""(function () { var find = document.getElementById('find'); find.value = '';
+          find.dispatchEvent(new Event('input')); document.querySelector('[data-mode="commits"]').click(); })()""")
+
+        # A refresh keeps the selected uncommitted row (still open from above) and shows a newly edited file.
+        before = json.loads(chrome.evaluate(self.STATE))
+        self.assertEqual((before["selectedFolder"], before["isDetailOpen"]), (str(repository), True))
+        (repository / "fresh.txt").write_text("fresh\n")
+        self.refresh(chrome)
+        after = json.loads(chrome.evaluate(self.STATE))
+        self.assertEqual(after["selected"], before["selected"])
+        self.assertTrue(after["isDetailOpen"])
+        self.assertEqual(dict(after["working"])[str(repository)], 8)
+
+        # When the selected folder's work is committed, the selection moves to its new commit.
+        feature = self.row_of(chrome, trees["feature"])
+        chrome.evaluate(f"document.querySelector('#list .r[data-row=\"{feature}\"] .s').click()")
+        chrome.wait("!document.getElementById('detail').hidden")
+        self.commit_all(trees["feature"], "Finish the feature")
+        self.refresh(chrome)
+        moved = json.loads(chrome.evaluate(self.STATE))
+        self.assertNotIn(str(trees["feature"]), dict(moved["working"]))
+        self.assertEqual(moved["selected"], self.git(trees["feature"], "rev-parse", "HEAD"))
+        self.assertTrue(moved["isDetailOpen"])
         self.assertEqual(chrome.errors, [])
 
 

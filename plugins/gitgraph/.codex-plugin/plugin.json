@@ -1,7 +1,7 @@
 {
   "name": "gitgraph",
-  "version": "1.3.0",
-  "description": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
+  "version": "1.4.0",
+  "description": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, uncommitted changes in every worktree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Gitgraph",
     "shortDescription": "Git history as a page",
-    "longDescription": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
+    "longDescription": "Git history as a page — opens the whole commit graph of the repository or a submodule in your browser (or Codex's in-app browser on request): refs tree, uncommitted changes in every worktree, find by commit or by changed file, commit details with per-hunk diffs, copy.",
     "developerName": "Sebastian Sulinski",
     "category": "Productivity",
     "capabilities": [],

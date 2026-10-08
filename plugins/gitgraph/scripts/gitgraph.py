@@ -49,7 +49,7 @@ from urllib.request import urlopen
 # The helper's version is also the page's revision: it rises whenever the helper's endpoints or the
 # page's code change (the test of page_fingerprint enforces the second), so a helper never rebuilds a
 # page with older page code, and ensure replaces an older helper.
-VERSION = 'gitgraph-server-6'
+VERSION = 'gitgraph-server-7'
 LIMIT = 20000
 PALETTE = ['#a855f7', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6', '#ef4444', '#84cc16']
 
@@ -294,6 +294,223 @@ def layout_graph(raw):
     return {'commits': commits, 'edges': edges, 'lanes': lanes}
 
 
+# Uncommitted changes ---------------------------------------------------------------------
+#
+# Reading a working folder differs from reading history: git status and diffs against the folder pass
+# file contents through the repository's configured filters (clean, smudge and long-running process
+# filters, as Git LFS uses), which GIT_GUARDS do not stop. Every working-folder command therefore
+# switches off each filter driver configured in any scope, and takes no optional locks, so reading
+# never rewrites a worktree's index under someone working in it.
+
+WORKING_SECONDS = 10
+NEW_FILES_LIMIT = 1000
+
+
+def filter_switches(folder):
+    """The -c options that switch off every filter driver configured for `folder`, and whether there were any."""
+    _, listed, _ = run_git(folder, 'config', '-z', '--get-regexp', r'^filter\..*\.(clean|smudge|process|required)$')
+    names = []
+    for entry in [entry for entry in listed.split('\0') if entry]:
+        key = entry.split('\n', 1)[0]
+        name = key[len('filter.'):key.rfind('.')]
+        if key.startswith('filter.') and name and name not in names:
+            names.append(name)
+    switches = []
+    for name in names:
+        for setting in ('clean=', 'smudge=', 'process=', 'required=false'):
+            switches += ['-c', 'filter.{}.{}'.format(name, setting)]
+
+    return switches, bool(names)
+
+
+def working_git(folder, switches, *arguments, timeout=60):
+    return run_git(folder, '--no-optional-locks', '-c', 'core.quotepath=off', *(list(switches) + list(arguments)),
+                   timeout=timeout)
+
+
+def list_worktrees(path):
+    """
+    Every worktree of the repository at `path` whose folder still exists: {"folder", "name", "head",
+    "branch"}, the folder as its real path and the branch None when detached. Bare and prunable entries are
+    left out. Inside a submodule, git names the main worktree by the module's git folder
+    (.git/modules/<name>); its checkout is read from core.worktree instead (in config.worktree when
+    per-worktree configuration is on, otherwise in config).
+    """
+    code, listed, _ = run_git(path, 'worktree', 'list', '--porcelain', '-z')
+    if code != 0:
+        return []
+    _, common, _ = run_git(path, 'rev-parse', '--git-common-dir')
+    common = os.path.realpath(os.path.join(path, common.strip())) if common.strip() else ''
+    trees = []
+    entry = {}
+    for field in listed.split('\0') + ['']:
+        if field:
+            name, _, value = field.partition(' ')
+            entry[name] = value
+            continue
+        if 'worktree' in entry and 'bare' not in entry and 'prunable' not in entry:
+            folder = os.path.realpath(entry['worktree'])
+            if common and folder == common:
+                # With per-worktree configuration on, git keeps the location in config.worktree.
+                configured = ''
+                for name in ('config.worktree', 'config'):
+                    _, configured, _ = run_git(path, 'config', '--file', os.path.join(common, name), '--get', 'core.worktree')
+                    if configured.strip():
+                        break
+                folder = os.path.realpath(os.path.join(common, configured.strip())) if configured.strip() else ''
+            branch = entry.get('branch', '')
+            if folder and os.path.isdir(folder):
+                trees.append({
+                    'folder': folder,
+                    'name': os.path.basename(folder) or folder,
+                    'head': entry.get('HEAD') if HASH.match(entry.get('HEAD', '')) and entry.get('HEAD').strip('0') else None,
+                    'branch': branch[len('refs/heads/'):] if branch.startswith('refs/heads/') else None,
+                })
+        entry = {}
+
+    return trees
+
+
+def parse_status(output):
+    """
+    `git status --porcelain=v2 -z` as one entry per file: {"path", "from", "label", "status"}, the label
+    one of staged, not staged, staged and not staged, new or conflicted, the status the letter the page
+    shows (a new file shows as added, a conflicted one as U).
+    """
+    tokens = output.split('\0')
+    files = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token:
+            continue
+        kind = token[0]
+        if kind == '?':
+            files.append({'path': token[2:], 'from': None, 'label': 'new', 'status': 'A'})
+            continue
+        if kind == 'u':
+            files.append({'path': token.split(' ', 10)[10], 'from': None, 'label': 'conflicted', 'status': 'U'})
+            continue
+        if kind not in '12':
+            continue
+        fields = token.split(' ', 8 if kind == '1' else 9)
+        source = None
+        if kind == '2':
+            source = tokens[index]
+            index += 1
+        state = fields[1]
+        is_staged, is_unstaged = state[0] != '.', state[1] != '.'
+        label = 'staged and not staged' if is_staged and is_unstaged else 'staged' if is_staged else 'not staged'
+        files.append({'path': fields[-1], 'from': source, 'label': label, 'status': state[0] if is_staged else state[1]})
+
+    return files
+
+
+def read_worktree(tree):
+    """A worktree's uncommitted files ({"files", "filtersOff"}), or None when git could not read them."""
+    try:
+        switches, filters_off = filter_switches(tree['folder'])
+        code, output, _ = working_git(tree['folder'], switches, 'status', '--porcelain=v2', '-z',
+                                      '--untracked-files=all', '--ignore-submodules=dirty', timeout=WORKING_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if code != 0:
+        return None
+
+    return {'files': parse_status(output), 'filtersOff': filters_off}
+
+
+def working_record(tree, read, is_this, generated, short):
+    """A worktree with uncommitted work as a row of the graph, shaped like a commit the page draws."""
+    if read is None:
+        files, filters_off, summary = [], False, 'could not be read'
+    else:
+        files, filters_off = read['files'], read['filtersOff']
+    counts = {
+        'staged': sum(1 for file in files if file['label'] in ('staged', 'staged and not staged')),
+        'notStaged': sum(1 for file in files if file['label'] in ('not staged', 'staged and not staged')),
+        'new': sum(1 for file in files if file['label'] == 'new'),
+        'conflicted': sum(1 for file in files if file['label'] == 'conflicted'),
+    }
+    if read is not None:
+        names = (('staged', 'staged'), ('notStaged', 'not staged'), ('new', 'new'), ('conflicted', 'conflicted'))
+        summary = ' · '.join('{} {}'.format(counts[key], word) for key, word in names if counts[key])
+    shown, hidden, new_seen = [], 0, 0
+    for file in files:
+        if file['label'] == 'new':
+            new_seen += 1
+            if new_seen > NEW_FILES_LIMIT:
+                hidden += 1
+                continue
+        shown.append(file)
+    paths = []
+    for file in shown:
+        paths.extend([file['path']] + ([file['from']] if file['from'] else []))
+    head = tree['head']
+
+    return {
+        'fullHash': 'worktree:' + hashlib.sha256(tree['folder'].encode('utf-8')).hexdigest()[:16],
+        'hash': '',
+        'parents': [head] if head else [],
+        'parentHashes': [short.get(head, (head or '')[:8])] if head else [],
+        'refs': [{'label': tree['branch'] or 'detached', 'kind': 'working'}],
+        'isHead': False,
+        'branches': [],
+        'remotes': [],
+        'tags': [],
+        'headBranch': None,
+        'author': summary,
+        'authorEmail': '',
+        'committer': summary,
+        'committerEmail': '',
+        'isCommittedByOther': False,
+        'time': generated,
+        'commitTime': generated,
+        'subject': 'Uncommitted changes · ' + ('this folder' if is_this else tree['name']),
+        'body': '',
+        'stats': {'files': len(files), 'insertions': 0, 'deletions': 0},
+        'isWorking': True,
+        'folder': tree['folder'],
+        'name': tree['name'],
+        'isThis': is_this,
+        'branch': tree['branch'],
+        'head': head,
+        'counts': counts,
+        'paths': paths,
+        'moreNew': hidden,
+        'isUnread': read is None,
+        'filtersOff': filters_off,
+    }
+
+
+def place_working(raw, path, generated):
+    """
+    Adds a row for each worktree with uncommitted work to the commits, newest first, each placed
+    immediately before the commit its worktree is on (at the top when that commit is not among them).
+    Answers (commits with the rows, every worktree for the page).
+    """
+    trees = list_worktrees(path)
+    this = os.path.realpath(path)
+    position = {commit['fullHash']: index for index, commit in enumerate(raw)}
+    short = {commit['fullHash']: commit['hash'] for commit in raw}
+    placed = {}
+    for tree in sorted(trees, key=lambda one: (one['folder'] != this, one['name'], one['folder'])):
+        read = read_worktree(tree)
+        if read is not None and not read['files']:
+            continue
+        at = position.get(tree['head'], 0)
+        placed.setdefault(at, []).append(working_record(tree, read, tree['folder'] == this, generated, short))
+    commits = []
+    for index, commit in enumerate(raw):
+        commits.extend(placed.get(index, []))
+        commits.append(commit)
+    listed = [{'folder': tree['folder'], 'name': tree['name'], 'head': tree['head'], 'branch': tree['branch'],
+               'isThis': tree['folder'] == this} for tree in trees]
+
+    return commits, listed
+
+
 def load_graph(label, path):
     done = subprocess.run(
         ['git'] + GIT_GUARDS + ['log', '--no-show-signature', '--no-textconv', '--no-ext-diff', '--exclude=refs/stash',
@@ -303,8 +520,11 @@ def load_graph(label, path):
     if done.returncode != 0:
         raise Failure(done.stderr.decode('utf-8', 'replace').strip() or 'git log failed.')
     raw = parse_log(done.stdout.decode('utf-8', 'replace'))
-    graph = layout_graph(raw[:LIMIT])
-    graph.update({'repository': label, 'path': path, 'isTruncated': len(raw) > LIMIT})
+    loaded = raw[:LIMIT]
+    rows, trees = place_working(loaded, path, int(time.time()))
+    graph = layout_graph(rows)
+    graph.update({'repository': label, 'path': path, 'isTruncated': len(raw) > LIMIT, 'commitCount': len(loaded),
+                  'trees': trees})
 
     return graph
 
@@ -376,6 +596,8 @@ path{fill:none;stroke-width:2;stroke-linecap:round}
 .r .s{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .r .p{font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;border:1px solid currentColor;flex:none}
 .r .p.remote{opacity:.75}
+.r .p.working{border-style:dashed}.r.work .s{font-style:italic}.r.work .a{font-weight:400;color:var(--dim)}
+#list path.w{stroke-dasharray:4 4}
 .r .a{width:160px;flex:none;overflow:hidden;text-overflow:ellipsis;font-weight:600}
 .r .d{width:130px;flex:none;color:var(--dim)}
 .r .h{width:70px;flex:none;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);cursor:copy}
@@ -423,6 +645,9 @@ path{fill:none;stroke-width:2;stroke-linecap:round}
 #detail .num{flex:none;font:11.5px ui-monospace,Menlo,monospace}
 #detail .num .add,#detail .num .del{margin-left:6px}
 #detail .note{padding:6px 10px 8px;color:var(--dim);font-size:12px}
+#detail .lab{flex:none;font-size:10.5px;padding:0 6px;border-radius:8px;border:1px dashed var(--edge);color:var(--dim)}
+#detail .part{padding:6px 2px 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+#detail pre.raw{margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;overflow:auto;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
 #detail .diff{flex:1;overflow:auto;border-left:1px solid var(--line);min-width:0;background:var(--bg)}
 #detail .dh{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--side);border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
 #detail .dh .num{margin-left:auto;font-weight:400}
@@ -531,11 +756,13 @@ SCRIPT = r'''
     var parts = [];
     edges.forEach(function (e) {
       var last = e.parentRow < 0 ? Infinity : e.parentRow;
-      if (e.childRow < end && last >= start) parts.push('<path data-c="' + e.childRow + '" data-p="' + e.parentRow + '" stroke="' + colour(e.lane) + '" d="' + edgePath(e) + '"/>');
+      if (e.childRow < end && last >= start) parts.push('<path data-c="' + e.childRow + '" data-p="' + e.parentRow + '"' + (commits[e.childRow].isWorking ? ' class="w"' : '') + ' stroke="' + colour(e.lane) + '" d="' + edgePath(e) + '"/>');
     });
     for (var row = start; row < end; row++) {
       var c = commits[row], cx = x(c.lane), cy = y(row);
-      parts.push(c.isHead
+      parts.push(c.isWorking
+        ? '<circle data-r="' + row + '" cx="' + cx + '" cy="' + cy + '" r="5" fill="var(--bg)" stroke="' + colour(c.lane) + '" stroke-width="2" stroke-dasharray="2.5 2"/>'
+        : c.isHead
         ? '<circle data-r="' + row + '" cx="' + cx + '" cy="' + cy + '" r="5.5" fill="var(--bg)" stroke="' + colour(c.lane) + '" stroke-width="2.5"/>'
         : '<circle data-r="' + row + '" cx="' + cx + '" cy="' + cy + '" r="4.5" fill="' + colour(c.lane) + '"/>');
     }
@@ -546,6 +773,12 @@ SCRIPT = r'''
     var pills = c.refs.map(function (r) {
       return '<span class="p ' + r.kind + '" style="color:' + colour(c.lane) + '">' + esc(r.kind === 'tag' ? '⌂ ' + r.label : r.label) + '</span>';
     }).join('');
+    if (c.isWorking) {
+      return '<div class="r work" data-row="' + c.row + '" style="top:' + c.row * ROW + 'px;padding-left:' + graphWidth + 'px">' +
+        '<span class="s" title="' + esc(c.folder) + '">' + esc(c.subject) + '</span>' + pills +
+        '<span class="a" title="' + esc(c.author) + '">' + esc(c.author) + '</span>' +
+        '<span class="d">' + when(c.time) + '</span><span class="h"></span></div>';
+    }
     return '<div class="r' + (c.isHead ? ' head' : '') + '" data-row="' + c.row + '" style="top:' + c.row * ROW + 'px;padding-left:' + graphWidth + 'px">' +
       '<span class="s" title="' + esc(c.subject) + '">' + esc(c.subject) + '</span>' + pills +
       '<span class="a">' + esc(c.author) + (c.isCommittedByOther ? '*' : '') + '</span>' +
@@ -626,7 +859,16 @@ SCRIPT = r'''
     var body = names.length ? render(tree(names), '', openAll, kind) : '<div class="empty">None</div>';
     return '<details data-key="' + kind + '" open><summary>' + title + '</summary><div class="kids">' + body + '</div></details>';
   }
-  document.getElementById('refs').innerHTML =
+  // Uncommitted: each worktree with uncommitted work, listed by folder; a click jumps to its row.
+  var working = commits.filter(function (c) { return c.isWorking; });
+  var uncommitted = working.length
+    ? '<details data-key="working" open><summary>Uncommitted</summary><div class="kids">' + working.map(function (c) {
+        return '<div class="leaf" data-row="' + c.row + '" data-kind="working" data-name="' + esc(c.folder) + '" title="' + esc(c.folder) + '">' +
+          '<i style="background:' + colour(c.lane) + '"></i>' + esc(c.name + (c.isThis ? ' (this folder)' : '')) +
+          ' <span class="n">' + (c.isUnread ? '?' : c.stats.files) + '</span></div>';
+      }).join('') + '</div></details>'
+    : '';
+  document.getElementById('refs').innerHTML = uncommitted +
     section('Branches', sets.branches, false, 'branches') + section('Remotes', sets.remotes, true, 'remotes') + section('Tags', sets.tags, false, 'tags');
 
   // --------------------------------------------------------------- behaviour
@@ -718,6 +960,13 @@ SCRIPT = r'''
         reach[row] = true;
         (parentsOf[row] || []).forEach(function (parent) { if (!reach[parent]) stack.push(parent); });
       }
+      // A branch keeps its worktrees' uncommitted rows in view: they sit on its commits.
+      if (leaf.getAttribute('data-kind') === 'branches') {
+        var branch = leaf.getAttribute('data-name');
+        commits.forEach(function (c) {
+          if (c.isWorking && c.branch === branch && (parentsOf[c.row] || []).some(function (parent) { return reach[parent]; })) reach[c.row] = true;
+        });
+      }
     }
     focusReach = reach;
     paint();
@@ -735,6 +984,7 @@ SCRIPT = r'''
     var leaf = e.target.closest('.leaf');
     if (!leaf) return;
     var name = leaf.getAttribute('data-name'), c = commits[Number(leaf.getAttribute('data-row'))];
+    if (c.isWorking) return openMenu(e, c.folder, both(c.folder, 'the folder path', 'folder path').concat([null, ['Go to its row', function () { select(c.row); }]]));
     openMenu(e, name, both(name, name, 'name').concat([null],
       both(c.hash, c.hash, 'latest commit hash'),
       [null, ['Go to latest commit', function () { select(c.row); }]]));
@@ -748,7 +998,43 @@ SCRIPT = r'''
     return relative === full ? full : full + ' (' + relative + ')';
   }
   function person(name, email) { return esc(name) + ' &lt;' + esc(email) + '&gt;'; }
+  // An uncommitted row's details: the folder, its branch and commit, and what it holds. Its Changes
+  // tab reads the folder live from the helper.
+  function openWorking(c) {
+    shownRow = c.row;
+    var parent = (parentsOf[c.row] || [])[0], counts = c.counts, words = [];
+    [['staged', 'staged'], ['notStaged', 'not staged'], ['new', 'new'], ['conflicted', 'conflicted']].forEach(function (pair) {
+      if (counts[pair[0]]) words.push(counts[pair[0]] + ' ' + pair[1]);
+    });
+    var rows = [
+      ['Folder', '<code class="link" data-copy="' + esc(c.folder) + '" data-label="the folder path">' + esc(c.folder) + '</code>'],
+      ['Branch', c.branch ? esc(c.branch) : 'none (detached)'],
+      ['On commit', parent !== undefined ? '<code class="link" data-go="' + parent + '">' + commits[parent].hash + '</code>' : (c.head ? '<code>' + c.head.slice(0, 8) + '</code>' : 'none yet')],
+      ['Changes', c.isUnread ? 'could not be read' : c.stats.files + (c.stats.files === 1 ? ' file: ' : ' files: ') + words.join(', ')],
+      ['Read', stamp(c.time) + ', when this page was built'],
+    ];
+    if (c.moreNew) rows.push(['Not listed', c.moreNew + ' more new files']);
+    if (c.filtersOff) rows.push(['Filters', 'not run: files are compared as they sit in the folder']);
+    var canChange = HELPER && !c.isUnread;
+    detail.innerHTML = '<div class="grip h" data-resize="detail"></div>' +
+      '<div class="head"><span class="dot" style="background:' + colour(c.lane) + '"></span>' +
+      '<code class="sha" data-copy="' + esc(c.folder) + '" data-label="the folder path" title="Copy the folder path">' + esc(c.name) + '</code>' +
+      '<span class="who">' + esc(c.author) + ' · ' + when(c.time) + '</span>' +
+      '<div class="tabs"><button data-tab="details"' + (tab === 'details' || !canChange ? ' class="on"' : '') + '>Details</button>' +
+      (canChange ? '<button data-tab="changes"' + (tab === 'changes' ? ' class="on"' : '') + '>Changes <span class="n">' + c.stats.files + '</span></button>' : '') + '</div>' +
+      '<div class="actions"><div class="seg" hidden></div><button class="x" title="Close (Esc)">×</button></div></div>' +
+      '<div class="cols"' + (tab === 'changes' && canChange ? ' hidden' : '') + '><div class="meta"><dl>' + rows.map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('') + '</dl></div>' +
+      '<div class="grip v" data-resize="meta"></div>' +
+      '<div class="text"><h2>' + esc(c.subject) + '</h2><p class="none">' + (c.isUnread
+        ? 'Git could not read this folder when the page was built.'
+        : 'Work in this folder that is not committed yet. It sits on the commit it would be committed on top of.') + '</p></div></div>' +
+      '<div class="changes"' + (tab === 'changes' && canChange ? '' : ' hidden') + '><div class="files"><p class="empty">Loading changes…</p></div>' +
+      '<div class="grip v" data-resize="files"></div><div class="diff"></div></div>';
+    detail.hidden = false;
+    if (tab === 'changes' && canChange) loadChanges(c);
+  }
   function openDetail(c) {
+    if (c.isWorking) return openWorking(c);
     shownRow = c.row;
     var byRow = {};
     commits.forEach(function (other) { byRow[other.hash] = other.row; });
@@ -808,6 +1094,7 @@ SCRIPT = r'''
     if (name === 'changes' && shownRow >= 0) loadChanges(commits[shownRow]);
   }
   function loadChanges(c) {
+    if (c.isWorking) return loadWorking(c);
     if (changesOf[c.fullHash]) return renderChanges(c, changesOf[c.fullHash]);
     fetch('/changes?repo=' + encodeURIComponent(REPO) + '&hash=' + c.fullHash)
       .then(function (response) { return response.json(); })
@@ -820,6 +1107,36 @@ SCRIPT = r'''
         if (shownRow !== c.row) return;
         detail.querySelector('.files').innerHTML = '<p class="empty">Changes could not be read. Run ' + esc(RERUN) + ' again to restart the helper.</p>';
       });
+  }
+  // An uncommitted row's files, read again each time its Changes tab opens: they change as people work.
+  function loadWorking(c) {
+    fetch('/working?repo=' + encodeURIComponent(REPO) + '&folder=' + encodeURIComponent(c.folder))
+      .then(function (response) {
+        if (response.status === 404) throw new Error('gone');
+        return response.json();
+      })
+      .then(function (data) {
+        if (data.error) throw new Error(data.error);
+        data.isWorking = true;
+        changesOf[c.fullHash] = data;
+        if (shownRow === c.row) renderChanges(c, data);
+      })
+      .catch(function (error) {
+        if (shownRow !== c.row) return;
+        detail.querySelector('.files').innerHTML = '<p class="empty">' + (String(error.message) === 'gone'
+          ? 'This folder is no longer one of the repository\'s worktrees. Refresh to update the graph.'
+          : 'Changes could not be read. Run ' + esc(RERUN) + ' again to restart the helper.') + '</p>';
+      });
+  }
+  // A file's two parts (staged, not staged) counted together, for the file list and its header.
+  function together(file) {
+    if (!file.label) return file;
+    var parts = [file.staged, file.unstaged].filter(Boolean);
+    return {
+      binary: parts.some(function (part) { return part.binary; }),
+      added: parts.reduce(function (sum, part) { return sum + (part.added || 0); }, 0),
+      deleted: parts.reduce(function (sum, part) { return sum + (part.deleted || 0); }, 0),
+    };
   }
   function counts(file) {
     return file.binary ? '<span class="num">binary</span>'
@@ -837,8 +1154,13 @@ SCRIPT = r'''
       });
     }
     var note = data.isMerge ? '<p class="note">Merge commit: changes against its first parent.</p>' : '';
+    if (data.isWorking) {
+      note = '<p class="note">As it is now. Refresh to update the graph.' +
+        (data.filtersOff ? ' Filters were not run: files are compared as they sit in the folder.' : '') +
+        (data.moreNew ? ' ' + data.moreNew + ' more new files are not listed.' : '') + '</p>';
+    }
     if (!data.files.length) {
-      detail.querySelector('.files').innerHTML = note + '<p class="empty">No file changes.</p>';
+      detail.querySelector('.files').innerHTML = note + '<p class="empty">' + (data.isWorking ? 'No uncommitted changes now.' : 'No file changes.') + '</p>';
       detail.querySelector('.diff').innerHTML = '';
       return;
     }
@@ -848,7 +1170,7 @@ SCRIPT = r'''
       return '<div class="file' + (index === shownFile ? ' on' : '') + '" data-file="' + index + '" title="' + esc(title) + '">' +
         '<b class="st ' + file.status + '">' + file.status + '</b>' +
         '<span class="fp">' + esc(file.path.slice(slash + 1)) + (slash >= 0 ? '<span class="dir">' + esc(file.path.slice(0, slash)) + '</span>' : '') + '</span>' +
-        counts(file) + '</div>';
+        (file.label ? '<span class="lab">' + esc(file.label) + '</span>' : '') + counts(together(file)) + '</div>';
     }).join('');
     renderDiff(data.files[shownFile]);
     var on = detail.querySelector('.file.on');
@@ -856,9 +1178,29 @@ SCRIPT = r'''
   }
   function renderDiff(file) {
     var title = file.from ? esc(file.from) + ' → ' + esc(file.path) : esc(file.path);
-    var head = '<div class="dh"><b class="st ' + file.status + '">' + file.status + '</b>' + title + counts(file) + '</div>';
+    var head = '<div class="dh"><b class="st ' + file.status + '">' + file.status + '</b>' + title +
+      (file.label ? '<span class="lab">' + esc(file.label) + '</span>' : '') + counts(together(file)) + '</div>';
+    if (file.label) {
+      var parts = [['Staged', file.staged], ['Not staged', file.unstaged]].filter(function (pair) { return pair[1]; });
+      detail.querySelector('.diff').innerHTML = head + '<div class="hunks">' + (parts.length ? parts.map(function (pair) {
+        return '<div class="part">' + pair[0] + '</div>' + partHtml(pair[1]);
+      }).join('') : '<p class="empty">No changes to show.</p>') + '</div>';
+      detail.querySelector('.diff').scrollTop = 0;
+      return;
+    }
     if (file.binary) return (detail.querySelector('.diff').innerHTML = head + '<p class="empty">Binary file: no text changes to show.</p>');
     if (!file.hunks) return (detail.querySelector('.diff').innerHTML = head + '<p class="empty">' + (file.truncated ? 'Too large to show here.' : 'No text changes (mode or rename only).') + '</p>');
+    detail.querySelector('.diff').innerHTML = head + '<div class="hunks">' + hunkCards(file) + '</div>';
+    detail.querySelector('.diff').scrollTop = 0;
+  }
+  // One part of an uncommitted file: a conflict as git shows it, or its hunks.
+  function partHtml(part) {
+    if (part.raw) return '<pre class="raw">' + esc(part.raw) + '</pre>';
+    if (part.binary) return '<p class="empty">Binary file: no text changes to show.</p>';
+    if (!part.hunks) return '<p class="empty">' + (part.truncated ? 'Too large to show here.' : 'No text changes (mode or rename only).') + '</p>';
+    return hunkCards(part);
+  }
+  function hunkCards(file) {
     // One card per hunk: a header naming its place in the file, then its lines.
     var old = 0, now = 0, cards = [], card = null;
     file.hunks.split('\n').forEach(function (line) {
@@ -890,8 +1232,7 @@ SCRIPT = r'''
         '<div class="body"><div class="lines">' + c.lines.join('') + '</div></div></section>';
     });
     if (file.truncated) html.push('<p class="empty">Cut short: the rest of this file\'s changes are too large to show here.</p>');
-    detail.querySelector('.diff').innerHTML = head + '<div class="hunks">' + html.join('') + '</div>';
-    detail.querySelector('.diff').scrollTop = 0;
+    return html.join('');
   }
   // The message as plain text, or as Markdown: the subject as a heading, the body as
   // written (Git bodies are already Markdown-like), list markers normalised to '-' and
@@ -945,11 +1286,12 @@ SCRIPT = r'''
     }
     var go = e.target.getAttribute('data-go'), copyText = e.target.getAttribute('data-copy');
     if (go !== null) { select(Number(go)); openDetail(commits[Number(go)]); }
-    if (copyText !== null) copy(copyText, copyText.slice(0, 8));
+    if (copyText !== null) copy(copyText, e.target.getAttribute('data-label') || copyText.slice(0, 8));
   });
   detail.addEventListener('contextmenu', function (e) {
     if (shownRow < 0 || String(getSelection())) return;
     var c = commits[shownRow];
+    if (c.isWorking) return openMenu(e, c.folder, both(c.folder, 'the folder path', 'folder path'));
     openMenu(e, c.subject, both(c.hash, c.hash, 'hash').concat([['Copy full hash', function () { copy(c.fullHash, c.hash); }], null],
       both(c.subject + (c.body ? '\n\n' + c.body : ''), 'message', 'message'),
       both(c.author + ' <' + c.authorEmail + '>', c.author, 'author')));
@@ -960,7 +1302,7 @@ SCRIPT = r'''
     var row = e.target.closest('.r');
     if (!row) return;
     var c = commits[Number(row.getAttribute('data-row'))];
-    if (e.target.classList.contains('h')) { copy(c.hash); select(c.row); return; }
+    if (e.target.classList.contains('h') && !c.isWorking) { copy(c.hash); select(c.row); return; }
     select(c.row);
     if (shownRow === c.row) return closeDetail();
     openCommit(c, filterKind === 'files' && !!matched && !!matched[c.row]);
@@ -1008,6 +1350,11 @@ SCRIPT = r'''
     if (!row) return;
     var c = commits[Number(row.getAttribute('data-row'))];
     select(c.row);
+    if (c.isWorking) {
+      var on = (parentsOf[c.row] || [])[0];
+      return openMenu(e, c.subject, both(c.folder, 'the folder path', 'folder path').concat(
+        on === undefined ? [] : [null, ['Go to its commit', function () { select(on); }]]));
+    }
     var items = both(c.hash, c.hash, 'hash').concat(
       [['Copy full hash', function () { copy(c.fullHash, c.hash); }], null],
       both(c.subject, 'subject', 'subject'));
@@ -1100,7 +1447,8 @@ SCRIPT = r'''
     var needle = find.value.trim().toLowerCase();
     if (!needle) { clearFilter(); setCount(''); return; }
     var hits = commits.filter(function (c) {
-      return (c.subject + ' ' + c.author + ' ' + c.fullHash + ' ' + c.branches.join(' ') + ' ' + c.remotes.join(' ') + ' ' + c.tags.join(' ')).toLowerCase().indexOf(needle) >= 0;
+      return (c.subject + ' ' + c.author + ' ' + c.fullHash + ' ' + c.branches.join(' ') + ' ' + c.remotes.join(' ') + ' ' + c.tags.join(' ') +
+        (c.isWorking ? ' ' + (c.branch || 'detached') + ' ' + c.folder : '')).toLowerCase().indexOf(needle) >= 0;
     });
     showFiltered('commits', hits, null);
   }
@@ -1176,6 +1524,13 @@ SCRIPT = r'''
           if (ticket !== fileQuery || mode !== 'files') return;
           if (data.error) throw new Error(data.error);
           fileMatches = data.matches;
+          // Uncommitted rows match on the paths they hold, which no commit has yet.
+          var lowered = needle.toLowerCase();
+          commits.forEach(function (c) {
+            if (!c.isWorking) return;
+            var held = c.paths.filter(function (path) { return picked !== null ? path === picked : path.toLowerCase().indexOf(lowered) >= 0; });
+            if (held.length) fileMatches[c.fullHash] = held.slice(0, 20);
+          });
           var hits = commits.filter(function (c) { return fileMatches[c.fullHash]; });
           showFiltered('files', hits, function (c) { return fileMatches[c.fullHash]; });
         })
@@ -1363,6 +1718,8 @@ SCRIPT = r'''
       scroll: list.scrollTop,
       selected: selected ? commits[Number(selected.getAttribute('data-row'))].fullHash : null,
       detail: shown ? shown.fullHash : null,
+      selectedFolder: selected && commits[Number(selected.getAttribute('data-row'))].isWorking ? commits[Number(selected.getAttribute('data-row'))].folder : null,
+      detailFolder: shown && shown.isWorking ? shown.folder : null,
       tab: tab,
       file: file,
       find: { mode: mode, text: find.value, picked: picked, at: filterAt },
@@ -1405,14 +1762,22 @@ SCRIPT = r'''
     var view = restoring;
     restoring = null;
     if (!view) return;
+    // An uncommitted row that is gone (its folder was committed or cleaned) hands over to the commit
+    // that folder is on now.
+    function onCommitOf(folder) {
+      var tree = folder ? (DATA.trees || []).filter(function (one) { return one.folder === folder; })[0] : null;
+      return tree && tree.head ? rowOf[tree.head] : undefined;
+    }
     function finish() {
       isQuietFind = false;
       var row = view.selected ? rowOf[view.selected] : undefined;
+      if (row === undefined) row = onCommitOf(view.selectedFolder);
       if (row !== undefined) select(row, true);
       var shownAt = view.detail ? rowOf[view.detail] : undefined;
+      if (shownAt === undefined) shownAt = onCommitOf(view.detailFolder);
       if (shownAt !== undefined) {
         tab = view.tab === 'changes' && HELPER ? 'changes' : 'details';
-        preferred = view.file ? { hash: view.detail, paths: [view.file] } : null;
+        preferred = view.file ? { hash: commits[shownAt].fullHash, paths: [view.file] } : null;
         openDetail(commits[shownAt]);
       }
       scrollList(view);
@@ -1472,6 +1837,8 @@ def build_page(graph, generated_at, repo, prompt, rerun):
     """
     title = escape_html(graph['repository'])
     truncated = ' most recent' if graph['isTruncated'] else ''
+    working = sum(1 for commit in graph['commits'] if commit.get('isWorking'))
+    uncommitted = ' · {} folder{} with uncommitted changes'.format(working, '' if working == 1 else 's') if working else ''
 
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
@@ -1479,7 +1846,7 @@ def build_page(graph, generated_at, repo, prompt, rerun):
         # Dark unless this browser chose light before; set before the body draws, so no flash.
         "<script>try{if(localStorage.getItem('gitgraph-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(error){}</script>"
         '</head><body><header>'
-        '<strong>' + title + '</strong><span>' + str(len(graph['commits'])) + truncated + ' commits · generated '
+        '<strong>' + title + '</strong><span>' + str(graph['commitCount']) + truncated + ' commits' + uncommitted + ' · generated '
         + escape_html(generated_at) + '<span class="note"> · run ' + escape_html(rerun) + ' again to refresh</span></span>'
         '<div class="find"><div class="modes" id="modes">'
         '<button data-mode="commits" class="on" title="Find commits by subject, author, hash or ref">Commits</button>'
@@ -1491,7 +1858,7 @@ def build_page(graph, generated_at, repo, prompt, rerun):
         '<div class="app"><nav id="refs"></nav><div class="grip v" data-resize="nav"></div><div class="main">'
         '<div id="list"></div><div id="detail" hidden></div></div></div>'
         '<div id="menu" hidden></div><div id="toast" hidden></div>'
-        '<script>var DATA = ' + to_json({'commits': graph['commits'], 'edges': graph['edges']})
+        '<script>var DATA = ' + to_json({'commits': graph['commits'], 'edges': graph['edges'], 'trees': graph['trees']})
         + '; var PALETTE = ' + to_json(PALETTE) + '; var REPO = ' + to_json(repo)
         + '; var PROMPT = ' + to_json(prompt) + '; var RERUN = ' + to_json(rerun)
         + '; var PAGE = ' + str(version_number(VERSION)) + ';</script>'
@@ -1509,7 +1876,8 @@ def page_fingerprint():
                  FIELD + RECORD + END, str(LIMIT)):
         digest.update(part.encode('utf-8'))
     for function in (build_page, to_json, escape_html, load_graph, parse_log, parse_refs, stat_of, number,
-                     layout_graph):
+                     layout_graph, place_working, working_record, read_worktree, list_worktrees, parse_status,
+                     filter_switches, working_git):
         digest.update(inspect.getsource(function).encode('utf-8'))
 
     return digest.hexdigest()
@@ -1606,7 +1974,7 @@ def render_page(directory, key, label, path, prompt, rerun):
     if code != 0 or top.strip() != path:
         raise Failure('{} is no longer a Git repository; run {} again.'.format(label, rerun))
     graph = load_graph(label, path)
-    if not graph['commits']:
+    if not graph['commitCount']:
         raise Failure('{} has no commits.'.format(label))
     file = os.path.join(directory, key + '.html')
     write_atomically(file, build_page(graph, time.strftime('%d/%m/%Y, %H:%M'), key, prompt, rerun))
@@ -1630,7 +1998,7 @@ def build(arguments):
         'file': file,
         'key': key,
         'repository': label,
-        'commits': len(graph['commits']),
+        'commits': graph['commitCount'],
         'isTruncated': graph['isTruncated'],
     }
 
@@ -1648,14 +2016,15 @@ def helper_git(path, *arguments):
     return run_git(path, '-c', 'core.quotepath=off', *arguments)[1]
 
 
-def changes(path, commit):
-    """A commit's files and patches, against its first parent (the empty tree for a root commit)."""
-    parents = helper_git(path, 'rev-list', '--parents', '-n', '1', commit).split()
-    if not parents:
-        return {'error': 'unknown commit'}
-    base = parents[1] if len(parents) > 1 else EMPTY_TREE
+def diff_files(run, arguments, budget):
+    """
+    The files and patches of one `git diff` (its range or options in `arguments`), run through `run`:
+    status, the old name of a rename, added and deleted line counts, whether it is binary, and its
+    hunks, cut at FILE_LINES lines per file and TOTAL_CHARS across everything sharing `budget`. A
+    conflicted file comes as git's combined diff (`raw`), which the page shows as it is.
+    """
     files = []
-    tokens = helper_git(path, 'diff', '--no-textconv', '--no-ext-diff', '--name-status', '-M', '-z', base, commit).split('\0')
+    tokens = run('diff', '--no-textconv', '--no-ext-diff', '--name-status', '-M', '-z', *arguments).split('\0')
     index = 0
     while index < len(tokens) and tokens[index]:
         code = tokens[index]
@@ -1665,16 +2034,28 @@ def changes(path, commit):
         else:
             files.append({'status': code[0], 'from': None, 'path': tokens[index + 1]})
             index += 2
-    tokens = helper_git(path, 'diff', '--no-textconv', '--no-ext-diff', '--numstat', '-M', '-z', base, commit).split('\0')
+    tokens = run('diff', '--no-textconv', '--no-ext-diff', '--numstat', '-M', '-z', *arguments).split('\0')
     index = 0
     stats = []
     while index < len(tokens) and tokens[index]:
         added, deleted, name = tokens[index].split('\t', 2)
         index += 3 if name == '' else 1
         stats.append((added, deleted))
-    patch = helper_git(path, 'diff', '-M', '--no-color', '--no-textconv', '--no-ext-diff', base, commit)
-    chunks = re.split(r'^diff --git ', patch, flags=re.M)[1:]
-    spent = 0
+    patch = run('diff', '-M', '--no-color', '--no-textconv', '--no-ext-diff', *arguments)
+    chunks = re.split(r'^diff (?:--git|--cc|--combined) ', patch, flags=re.M)[1:]
+    # A conflicted file is listed twice (as U, then as M) but has one patch: keep one entry per path,
+    # the conflict, with its own counts.
+    paired = list(zip(files, stats + [('0', '0')] * (len(files) - len(stats))))
+    order = []
+    chosen = {}
+    for entry, counts in paired:
+        if entry['path'] not in chosen:
+            order.append(entry['path'])
+            chosen[entry['path']] = (entry, counts)
+        elif entry['status'] == 'U':
+            chosen[entry['path']] = (entry, counts)
+    files = [chosen[path][0] for path in order]
+    stats = [chosen[path][1] for path in order]
     for position, entry in enumerate(files):
         added, deleted = stats[position] if position < len(stats) else ('0', '0')
         entry['binary'] = added == '-'
@@ -1684,12 +2065,98 @@ def changes(path, commit):
         start = chunk.find('\n@@')
         hunks = chunk[start + 1:] if start >= 0 else ''
         lines = hunks.split('\n')
-        entry['truncated'] = len(lines) > FILE_LINES or spent > TOTAL_CHARS
-        hunks = '' if spent > TOTAL_CHARS else '\n'.join(lines[:FILE_LINES])
-        spent += len(hunks)
+        entry['truncated'] = len(lines) > FILE_LINES or budget['spent'] > TOTAL_CHARS
+        hunks = '' if budget['spent'] > TOTAL_CHARS else '\n'.join(lines[:FILE_LINES])
+        budget['spent'] += len(hunks)
+        if entry['status'] == 'U':
+            entry['raw'], hunks = hunks, ''
         entry['hunks'] = hunks
 
+    return files
+
+
+def changes(path, commit):
+    """A commit's files and patches, against its first parent (the empty tree for a root commit)."""
+    parents = helper_git(path, 'rev-list', '--parents', '-n', '1', commit).split()
+    if not parents:
+        return {'error': 'unknown commit'}
+    base = parents[1] if len(parents) > 1 else EMPTY_TREE
+    files = diff_files(lambda *arguments: helper_git(path, *arguments), [base, commit], {'spent': 0})
+
     return {'isMerge': len(parents) > 2, 'isRoot': len(parents) == 1, 'files': files}
+
+
+def new_file(folder, relative, budget):
+    """
+    A file git does not track yet, as an added file: read directly (no git, so no filter can run), a
+    symbolic link as its target, anything that is not a regular file as binary.
+    """
+    full = os.path.join(folder, relative)
+    entry = {'status': 'A', 'from': None, 'path': relative, 'deleted': 0, 'truncated': False}
+    if os.path.islink(full):
+        text = os.readlink(full)
+    elif not os.path.isfile(full) or not os.path.realpath(full).startswith(folder.rstrip('/') + '/'):
+        entry.update({'binary': True, 'added': 0, 'hunks': ''})
+        return entry
+    else:
+        room = max(0, TOTAL_CHARS - budget['spent'])
+        with open(full, 'rb') as handle:
+            data = handle.read(room + 1)
+        if b'\0' in data[:8000]:
+            entry.update({'binary': True, 'added': 0, 'hunks': ''})
+            return entry
+        text = data[:room].decode('utf-8', 'replace')
+        entry['truncated'] = len(data) > room
+    lines = text.split('\n')
+    is_whole = not lines[-1]
+    if is_whole:
+        lines.pop()
+    entry['binary'] = False
+    entry['added'] = len(lines)
+    entry['truncated'] = entry['truncated'] or len(lines) > FILE_LINES
+    shown = lines[:FILE_LINES]
+    hunks = '@@ -0,0 +1{} @@\n'.format('' if len(lines) == 1 else ',{}'.format(len(lines))) + '\n'.join('+' + line for line in shown)
+    if not is_whole and len(shown) == len(lines):
+        hunks += '\n\\ No newline at end of file'
+    entry['hunks'] = hunks if lines else ''
+    budget['spent'] += len(entry['hunks'])
+
+    return entry
+
+
+def working(tree):
+    """
+    One worktree's uncommitted files, read live: each with its label and up to two parts, Staged (the
+    index against the commit) and Not staged (the folder against the index; a new file's content).
+    """
+    folder = tree['folder']
+    switches, filters_off = filter_switches(folder)
+    code, output, error = working_git(folder, switches, 'status', '--porcelain=v2', '-z', '--untracked-files=all',
+                                      '--ignore-submodules=dirty', timeout=WORKING_SECONDS)
+    if code != 0:
+        return {'error': error.strip() or 'git status failed'}
+
+    def run(*arguments):
+        return working_git(folder, switches, *arguments)[1]
+    budget = {'spent': 0}
+    staged = {entry['path']: entry for entry in diff_files(run, ['--cached', '--ignore-submodules=dirty'], budget)}
+    unstaged = {entry['path']: entry for entry in diff_files(run, ['--ignore-submodules=dirty'], budget)}
+    files = []
+    hidden = 0
+    new_seen = 0
+    for file in parse_status(output):
+        if file['label'] == 'new':
+            new_seen += 1
+            if new_seen > NEW_FILES_LIMIT:
+                hidden += 1
+                continue
+            parts = (None, new_file(folder, file['path'], budget))
+        else:
+            parts = (staged.get(file['path']), unstaged.get(file['path']))
+        file.update({'staged': parts[0], 'unstaged': parts[1]})
+        files.append(file)
+
+    return {'folder': folder, 'files': files, 'moreNew': hidden, 'filtersOff': filters_off}
 
 
 HISTORY_SECONDS = 30
@@ -1817,7 +2284,7 @@ def refresh(helper, key, page):
         started = time.monotonic()
         try:
             _, graph = render_page(helper.root, key, details['label'], path, details.get('prompt'), details['rerun'])
-            answer = (200, {'commits': len(graph['commits']), 'isTruncated': graph['isTruncated']})
+            answer = (200, {'commits': graph['commitCount'], 'isTruncated': graph['isTruncated']})
         except Failure as failure:
             answer = (200, {'error': str(failure)})
         except (OSError, subprocess.SubprocessError) as error:
@@ -1931,6 +2398,13 @@ class Handler(BaseHTTPRequestHandler):
             if not path or not HASH.match(commit):
                 return self.reply(404, b'{"error":"unknown repository or commit"}', 'application/json')
             return self.answer(lambda: changes(path, commit))
+        if url.path == '/working':
+            path = helper.registered(query.get('repo', [''])[0])
+            wanted = os.path.realpath(query.get('folder', [''])[0]) if query.get('folder', [''])[0] else ''
+            tree = next((one for one in list_worktrees(path) if one['folder'] == wanted), None) if path and wanted else None
+            if tree is None:
+                return self.reply(404, b'{"error":"unknown repository or folder"}', 'application/json')
+            return self.answer(lambda: working(tree))
         if url.path in ('/touching', '/paths'):
             key = query.get('repo', [''])[0]
             path = helper.registered(key)
