@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-10-08
+
+### Fixed
+
+- **`claude plugin validate --strict ./gitgraph` passes again** (`gitgraph` Claude Code 1.5.1; the
+  Codex package is unchanged at 1.4.0). The validator rejected the hooks module because it passed
+  `$` to `read` and `update` imported from `claude-code`, and it follows `$` only into functions
+  declared in the same file. The token that pages carry for "add to prompt" is now read and written
+  through the session state directly: read with `$.state.get` and, when none exists yet, written
+  with `$.state.set` guarded by the version just read, so two runs at once still settle on one
+  token. Behaviour is unchanged: the state key is the same, so pages opened before the update keep
+  working.
+
 ## [1.13.0] - 2026-10-08
 
 ### Added
