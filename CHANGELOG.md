@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-10-08
+
+### Added
+
+- **`gitgraph` shows uncommitted changes** (Claude Code 1.5.0, Codex 1.4.0). Every worktree of the
+  repository with uncommitted work (the folder you ran it from, linked worktrees, detached ones)
+  gets a row of its own, placed directly above the commit that folder is on and joined to it by a
+  dashed line, with a summary such as "2 staged · 3 not staged · 1 new". An Uncommitted section in
+  the sidebar lists those folders. A row's details show its folder, branch and commit; its Changes
+  tab reads the folder live and labels each file staged, not staged, both, new or conflicted,
+  keeping the staged and not staged parts of its diff apart, so a staged change edited back to its
+  committed content stays visible. Find, branch focus and Refresh treat the rows like commits: a
+  refreshed row keeps its selection, and when a folder's work is committed the selection moves to
+  the new commit. Commit counts stay counts of commits. On a superproject's page a submodule counts
+  only when its recorded commit has moved; edits inside it show on the submodule's own page.
+
+### Changed
+
+- The helper and page revision is now `gitgraph-server-7`, and the recorded fingerprint of the
+  page's code also covers the functions that shape the page's data.
+
+### Fixed
+
+- A submodule's main checkout is found when per-worktree configuration keeps its location in
+  `config.worktree`.
+- The shared diff reader keeps one entry per conflicted file.
+- The refresh browser test waits for its restore to finish before clicking, which removes a race it
+  had occasionally lost.
+
+### Security
+
+- Reading a working folder switches off every filter driver the repository configures (clean,
+  smudge and process filters, which Git LFS uses), since the existing guards did not stop them, and
+  takes no optional locks, so it never rewrites a worktree's index while someone works in it. New
+  files are read directly, not through git. The security test covers these filters, required ones
+  included, and fails without the protection.
+
 ## [1.12.0] - 2026-10-05
 
 ### Added
