@@ -164,6 +164,16 @@ class ProgressSkillsTest(unittest.TestCase):
                 self.assertIn("sidebar group", contents)
                 self.assertIn("pinned", contents)
 
+    def test_every_session_keeps_a_hand_over_note(self):
+        for host, skill, path in self.variants():
+            with self.subTest(host=host, skill=skill):
+                contents = path.read_text()
+                self.assertIn("docs/progress/notes/<main-session>/<session-name>.md", contents)
+                self.assertIn("hand-over note", contents)
+        for template in self.TEMPLATES:
+            with self.subTest(template=template):
+                self.assertIn("hand-over note", (ROOT / "session/references" / template).read_text())
+
     def test_the_codex_variants_need_no_desktop_session_tools(self):
         for skill in self.SKILLS:
             with self.subTest(skill=skill):

@@ -32,10 +32,18 @@ Read both files in full, along with the applicable `AGENTS.md` instructions.
 
 This host can't message other tasks. Ask the user to bring each running sub-task in the session registry to a clean
 point before saving:
+- each sub-task write or update its **hand-over note** at `docs/progress/notes/<main-session>/<session-name>.md`. The
+  note covers what it knows that isn't in its plan or in git: the decisions it made and why, the gotchas it found,
+  what it tried that failed, what it's waiting on, and its exact next step. Keep it current rather than
+  appending a diary, and never write secrets in it;
 - finished chunks committed, with the project's checks green;
 - no new chunk started.
 
-Record what git shows for any task you can't reach.
+Record what git shows for any task you can't reach, and note in the report whose hand-over note wasn't updated.
+
+Write this main task's own **hand-over note** at `docs/progress/notes/<main-session>/<session-name>.md`, using its
+short name. It records the coordination knowledge: which task owns what, the merge order, and what's waiting on the
+user.
 
 ## Verify from git
 
@@ -66,6 +74,7 @@ Keep the other columns as they are, including any Claude sidebar groups and pins
   questions, not yet assigned, and decisions.
 - Record any uncommitted work as **uncommitted**, with what it is.
 - Copy any notes the work depends on into `docs/progress/notes/<main-session>/`.
+- List every task's hand-over note in the "Notes" section, and link it from that task's row or section.
 - Update the snapshot date, and append one dated line to the log.
 
 ## Commit and push

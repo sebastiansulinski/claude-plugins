@@ -13,7 +13,8 @@ a submodule. Read these in full:
 - `docs/progress/README.md`;
 - the main session's file;
 - the applicable `AGENTS.md` instructions;
-- the notes in `docs/progress/notes/<main-session>/` that the file names.
+- the notes in `docs/progress/notes/<main-session>/` that the file names, including the main session's own
+  **hand-over note** at `docs/progress/notes/<main-session>/<session-name>.md`.
 
 Don't assume a private memory was injected.
 
@@ -36,9 +37,10 @@ lets you set a title, give this task the main session's **exact title**.
 
 For each row not marked done or closed:
 - **When this host can delegate to a sub-agent or background task,** start one with the row's resume brief and its
-  exact title, working in the row's worktree by its absolute path. Add: "Read docs/progress/<main-session>.md and
-  README.md first; you have no memory of the earlier work." Use the row's model and reasoning settings where the host
-  allows.
+  exact title, working in the row's worktree by its absolute path. Add: "Read docs/progress/<main-session>.md, README.md
+  and your hand-over note at docs/progress/notes/<main-session>/<session-name>.md first; you have no memory of the
+  earlier work. Keep that hand-over note current from now on." Use the row's model and reasoning settings where the
+  host allows.
 - **Otherwise,** print the exact title and the brief as a ready-to-paste task, naming the worktree path.
 
 Record identifiers in this host's column of the **session registry**, for example "Codex seb@example.com", only when

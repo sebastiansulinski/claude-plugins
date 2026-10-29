@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A hand-over note for every session** (`session` Claude Code 1.4.0, Codex 1.3.0). Each one lives at
+  `docs/progress/notes/<main-session>/<session-name>.md` and holds the session's working memory, in a form another
+  account can read: what it knows that isn't in its plan or in git, its decisions and why, the gotchas it found, what
+  failed, what it's waiting on, and its exact next step.
+  - `session:progress-save` asks every sub-session to bring its note up to date before saving. It writes the main
+    session's own note, which holds the coordination knowledge, and reports any note that wasn't updated.
+  - `session:progress-resume` tells every reopened or recreated session to read its note first and keep it current.
+  - In Codex, the save asks the user to have each task update its note.
+  - Both templates list the notes.
+
 ## [1.15.0] - 2026-10-29
 
 ### Changed

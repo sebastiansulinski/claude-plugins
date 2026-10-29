@@ -11,8 +11,8 @@ on it. The pattern is described in `docs/progress/README.md`.
 ### Main session prompt (fallback when the skills aren't installed)
 
 ```text
-You are the main session "<main session's exact title>". Read docs/progress/README.md and
-docs/progress/<main-session>.md in full and verify every branch, commit and worktree they name against git. Then
+You are the main session "<main session's exact title>". Read docs/progress/README.md,
+docs/progress/<main-session>.md and your hand-over note in docs/progress/notes/<main-session>/ in full, and verify every branch, commit and worktree they name against git. Then
 reopen or recreate the sub-sessions in the session registry, with their exact titles, from their resume briefs, and
 continue. Update docs/progress/<main-session>.md at every milestone and commit and push it (docs/progress/ only).
 ```
@@ -38,6 +38,7 @@ The main session comes first. Titles are copied exactly as the sidebar shows the
 - **Plan:** <plan path>.
 - **State:** <commits ahead, what's built, what's uncommitted>.
 - **Then:** <next step, and where it stops for the owner>.
+- **Hand-over note:** `docs/progress/notes/<main-session>/<session-name>.md`.
 - **Resume brief:** "<A self-contained brief a new session can start from: the worktree, the plan, what to read
   first, what to build next, the checks to run, and what never to do.>"
 
@@ -59,7 +60,8 @@ The main session comes first. Titles are copied exactly as the sidebar shows the
 
 ## Notes
 
-- <Files in docs/progress/notes/<main-session>/ and what each holds.>
+- One hand-over note per session: <list each `docs/progress/notes/<main-session>/<session-name>.md`>.
+- <Other files in docs/progress/notes/<main-session>/ and what each holds.>
 
 ## Log
 

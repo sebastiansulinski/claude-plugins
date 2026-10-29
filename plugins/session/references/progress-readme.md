@@ -12,8 +12,12 @@ machine. It can then be resumed later on the original account, with that account
 - `docs/progress/<main-session>.md`: one file per main session. The name is the main session's sidebar title in lower
   case, with every run of other characters turned into a hyphen. For example, "Core: Scrape" becomes
   `core-scrape.md`.
-- `docs/progress/notes/<main-session>/`: hand-over notes and reviews the sessions share. A host's private notes and
-  memory aren't visible to another account, so anything a session needs lives here.
+- `docs/progress/notes/<main-session>/`: notes and reviews the sessions share. A host's private notes and memory
+  aren't visible to another account, so anything a session needs lives here.
+- `docs/progress/notes/<main-session>/<session-name>.md`: one **hand-over note** per session, the main session
+  included. Each session keeps its own: what it knows that isn't in its plan or in git, its decisions and why,
+  gotchas, what failed, what it's waiting on, and its exact next step. Save asks every session to update it, and a
+  resumed session reads it first. It's that session's memory in a form another account can read.
 
 Each file has a **session registry**: one row per session, the main session first. A row records:
 - the session's exact title as the sidebar shows it;

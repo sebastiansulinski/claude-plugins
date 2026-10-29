@@ -15,7 +15,8 @@ Accept the file's name, for example `core-scrape`, or the main session's exact t
 files in `docs/progress/`, with each one's main session title, and ask which one.
 
 This session takes over as the main session. Work from the repository root, which is the superproject when this
-checkout is a submodule. Read these in full:
+checkout is a submodule. Read these in full, including the main session's own **hand-over note** at
+`docs/progress/notes/<main-session>/<session-name>.md`:
 - `docs/progress/README.md`;
 - the main session's file;
 - the repository's `CLAUDE.md` and `AGENTS.md`;
@@ -47,7 +48,8 @@ Check the identifiers in this host and account's column with `mcp__ccd_session_m
   `mcp__ccd_sidebar__set_pinned`).
 - **Catch-up:** send each open sub-session a catch-up with `SendMessage` (`to` is its identifier). It says:
   - its memory is stale;
-  - re-read the main session's file and its own plan;
+  - re-read the main session's file, its own plan, and its own hand-over note at
+    `docs/progress/notes/<main-session>/<session-name>.md`;
   - check `git log` and `git status` in its worktree before acting;
   - what changed since its last activity, taken from the log and git: commits it didn't make, merges, and the owner's
     decisions;
@@ -66,8 +68,9 @@ Check the identifiers in this host and account's column with `mcp__ccd_session_m
    - `model`, `effort` and `permission_mode`: the row's values (the app may refuse a value above this session's own;
      note any it lowers);
    - `use_worktree`: false (the row's worktree is used by its absolute path);
-   - `prompt`: the row's resume brief, plus "Read docs/progress/<main-session>.md and README.md first; you have no
-     memory of the earlier work";
+   - `prompt`: the row's resume brief, plus "Read docs/progress/<main-session>.md, README.md and your hand-over note
+     at docs/progress/notes/<main-session>/<session-name>.md first; you have no memory of the earlier work. Keep that
+     hand-over note current from now on";
    - `background`: the main session's goal, decisions and standing rules.
 3. **Restore each new session's sidebar group and pin** with the sidebar tools.
 4. **Record the identifiers.** Write each new identifier, this session's included, in this account's column. Add the
