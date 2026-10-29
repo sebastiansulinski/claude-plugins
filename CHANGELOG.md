@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`session:progress-save` and `session:progress-resume`** (`session` Claude Code 1.2.0, Codex 1.1.0). They save and
+  resume orchestrated work: an orchestrating session and the sub-sessions it started, each on its own branch and
+  worktree. The state lives in `docs/progress/<workstream>.md`, committed and pushed. Its session registry records
+  each session's role, worktree and branch, with one column of identifiers per host and account. Save brings the
+  sub-sessions to a clean point, checks git, rewrites the file, then commits and pushes it. Resume checks the file
+  against git, then works one of two ways:
+  - on the account that owns the recorded sessions, it reopens them and catches each one up;
+  - on any other account, it recreates the orchestrator and every sub-session from their resume briefs.
+
+  The Codex variant has no desktop session tools. It verifies from git, then delegates or prints each brief as a
+  ready-to-paste task. Both bundle the same templates, for a project's `docs/progress/README.md` and for a workstream
+  file.
+
 ## [1.13.1] - 2026-10-08
 
 ### Fixed

@@ -17,7 +17,7 @@
     {
       "name": "session",
       "source": "./session",
-      "description": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+      "description": "Session bookends — resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume an orchestrated workstream's sessions through a committed progress file.",
       "category": "workflow"
     },
     {

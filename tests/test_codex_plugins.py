@@ -14,7 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
     "review": {"scrutinise", "plan-review", "plan-verify"},
-    "session": {"good-morning", "call-it-a-day"},
+    "session": {"good-morning", "call-it-a-day", "progress-save", "progress-resume"},
     "repo": {"deprecate"},
     "release": {"publish"},
     "requirements": {"interrogate"},
@@ -125,6 +125,42 @@ class CodexPackagesTest(unittest.TestCase):
                         self.assertFalse(member.startswith("/") or ".." in Path(member).parts)
                         source = ROOT / "plugins" / manifest["name"] / member
                         self.assertEqual(bundle.read(member), source.read_bytes())
+
+
+class ProgressSkillsTest(unittest.TestCase):
+    """The progress skills save and resume orchestrated work through docs/progress/ on both hosts."""
+
+    SKILLS = ("progress-save", "progress-resume")
+    TEMPLATES = ("progress-readme.md", "progress-workstream.md")
+
+    def variants(self):
+        for skill in self.SKILLS:
+            yield "claude", skill, ROOT / "session/skills" / skill / "SKILL.md"
+            yield "codex", skill, ROOT / "plugins/session/skills" / skill / "SKILL.md"
+
+    def test_both_hosts_keep_the_workstream_file_and_its_registry(self):
+        for host, skill, path in self.variants():
+            with self.subTest(host=host, skill=skill):
+                contents = path.read_text()
+                self.assertIn("docs/progress/<workstream>.md", contents)
+                self.assertIn("session registry", contents)
+                self.assertNotIn("/Users/", contents)
+
+    def test_the_codex_variants_need_no_desktop_session_tools(self):
+        for skill in self.SKILLS:
+            with self.subTest(skill=skill):
+                contents = (ROOT / "plugins/session/skills" / skill / "SKILL.md").read_text()
+                self.assertNotIn("mcp__ccd_", contents)
+                self.assertNotIn("SendMessage", contents)
+
+    def test_both_hosts_bundle_the_same_templates(self):
+        for template in self.TEMPLATES:
+            with self.subTest(template=template):
+                claude = ROOT / "session/references" / template
+                codex = ROOT / "plugins/session/references" / template
+                self.assertTrue(claude.is_file(), str(claude))
+                self.assertEqual(claude.read_bytes(), codex.read_bytes())
+                self.assertNotIn("/Users/", claude.read_text())
 
 
 class ClaudeHookPackagesTest(unittest.TestCase):

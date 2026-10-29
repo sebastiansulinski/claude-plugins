@@ -1,7 +1,7 @@
 {
   "name": "session",
-  "version": "1.0.0",
-  "description": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+  "version": "1.1.0",
+  "description": "Session bookends — resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume an orchestrated workstream's sessions through a committed progress file.",
   "author": {
     "name": "Sebastian Sulinski",
     "email": "seb@sulinski.me"
@@ -10,13 +10,15 @@
   "interface": {
     "displayName": "Session",
     "shortDescription": "Session bookends",
-    "longDescription": "Session bookends — resume the previous session, and capture end-of-session state so the next resumes cleanly.",
+    "longDescription": "Session bookends — resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume an orchestrated workstream's sessions through a committed progress file.",
     "developerName": "Sebastian Sulinski",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": [
       "Resume work from the project handoff.",
-      "Capture a handoff for the next session."
+      "Capture a handoff for the next session.",
+      "Save this workstream's progress before I switch accounts.",
+      "Resume the workstream from its progress file."
     ]
   },
   "repository": "https://github.com/sebastiansulinski/claude-plugins",

@@ -24,7 +24,7 @@ picker, mention its qualified name, or ask for the corresponding workflow:
 | Plugin | Codex skills |
 | --- | --- |
 | review | `review:scrutinise`, `review:plan-review`, `review:plan-verify` |
-| session | `session:good-morning`, `session:call-it-a-day` |
+| session | `session:good-morning`, `session:call-it-a-day`, `session:progress-save`, `session:progress-resume` |
 | repo | `repo:deprecate` |
 | release | `release:publish` |
 | requirements | `requirements:interrogate` |
@@ -183,7 +183,7 @@ keeps the bare name, so worktree's init is reachable only by its full name.
 | Plugin | Commands | What it does |
 |--------|----------|--------------|
 | `review` | `/review:scrutinise`, `/review:plan-review`, `/review:plan-verify` | Deep critical review of recent work; multi-agent grounded review of a plan file; and verification that a plan was fully and correctly implemented, plain-language summary first. |
-| `session` | `/session:good-morning`, `/session:call-it-a-day` | Resume the previous session, and capture end-of-session state so the next resumes cleanly. |
+| `session` | `/session:good-morning`, `/session:call-it-a-day`, `/session:progress-save`, `/session:progress-resume` | Resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume an orchestrated workstream — the orchestrator and all its sub-sessions — through `docs/progress/<workstream>.md`, so it continues under another account or host. |
 | `repo` | `/repo:deprecate` | Fully deprecate and archive a repository. |
 | `release` | `/release:publish` | Run the full changelog → git tag → GitHub release workflow. |
 | `requirements` | `/requirements:interrogate` | Exhaustive requirements interrogation — never writes code. |
