@@ -1,28 +1,30 @@
-# Progress: <workstream title>
+# Progress: <main session's exact title>
 
-**Snapshot:** <YYYY-MM-DD>, written by the orchestrator. Check every hash and branch below against git before relying
+**Snapshot:** <YYYY-MM-DD>, written by the main session. Check every hash and branch below against git before relying
 on it. The pattern is described in `docs/progress/README.md`.
 
 ## Resuming
 
-- **Save before switching:** run `session:progress-save <workstream>` in the orchestrator session.
-- **Continue:** run `session:progress-resume <workstream>` in a session opened at the repository root.
+- **Save before switching:** run `session:progress-save` in the main session.
+- **Continue:** run `session:progress-resume <main-session>` in a session opened at the repository root.
 
-### Orchestrator prompt (fallback when the skills aren't installed)
+### Main session prompt (fallback when the skills aren't installed)
 
 ```text
-You are the orchestrator for <workstream title>. Read docs/progress/README.md and docs/progress/<workstream>.md in
-full, verify every branch, commit and worktree they name against git, then recreate or reopen the sessions in the
-session registry from their resume briefs and continue. Update docs/progress/<workstream>.md at every milestone and
-commit and push it (docs/progress/ only).
+You are the main session "<main session's exact title>". Read docs/progress/README.md and
+docs/progress/<main-session>.md in full and verify every branch, commit and worktree they name against git. Then
+reopen or recreate the sub-sessions in the session registry, with their exact titles, from their resume briefs, and
+continue. Update docs/progress/<main-session>.md at every milestone and commit and push it (docs/progress/ only).
 ```
 
 ## Session registry
 
-| Role | Name | Worktree | Branch | <Host account> |
-|---|---|---|---|---|
-| Orchestrator | `<name>` | none (repository root) | `<branch>` | `<identifier>` |
-| <Sub-session role> | `<name>` | `<absolute worktree path>` | `<branch>` | `<identifier>` |
+The main session comes first. Titles are copied exactly as the sidebar shows them.
+
+| Role | Exact title | Short name | Sidebar group | Pinned | Model, effort, mode | Working folder | Worktree | Branch | <Host account> |
+|---|---|---|---|---|---|---|---|---|---|
+| Main session | <title> | `<name>` | <group or none> | <yes or no> | <model>, <effort>, <mode> | `<absolute path>` | none | `<branch>` | `<identifier>` |
+| <Sub-session role> | <title> | `<name>` | <group or none> | <yes or no> | <model>, <effort>, <mode> | `<absolute path>` | `<absolute worktree path>` | `<branch>` | `<identifier>` |
 
 ## Where things stand
 
@@ -30,7 +32,7 @@ commit and push it (docs/progress/ only).
 
 ## Sub-sessions
 
-### <Sub-session role> (`<name>`)
+### <Sub-session's exact title> (`<name>`)
 
 - **Branch and worktree:** <branch> in <absolute worktree path>, based on <commit>. Pushed: <yes or no>.
 - **Plan:** <plan path>.
@@ -57,7 +59,7 @@ commit and push it (docs/progress/ only).
 
 ## Notes
 
-- <Files in docs/progress/notes/<workstream>/ and what each holds.>
+- <Files in docs/progress/notes/<main-session>/ and what each holds.>
 
 ## Log
 

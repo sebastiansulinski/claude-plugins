@@ -138,13 +138,31 @@ class ProgressSkillsTest(unittest.TestCase):
             yield "claude", skill, ROOT / "session/skills" / skill / "SKILL.md"
             yield "codex", skill, ROOT / "plugins/session/skills" / skill / "SKILL.md"
 
-    def test_both_hosts_keep_the_workstream_file_and_its_registry(self):
+    def test_both_hosts_keep_one_file_per_main_session_and_its_registry(self):
         for host, skill, path in self.variants():
             with self.subTest(host=host, skill=skill):
                 contents = path.read_text()
-                self.assertIn("docs/progress/<workstream>.md", contents)
+                self.assertIn("docs/progress/<main-session>.md", contents)
                 self.assertIn("session registry", contents)
+                self.assertIn("exact title", contents)
                 self.assertNotIn("/Users/", contents)
+                # Never adopt another main session's file just because it is the only one.
+                self.assertNotIn("single workstream file", contents)
+
+    def test_save_names_the_file_from_the_main_session_title_and_can_save_all(self):
+        for host in ("claude", "codex"):
+            with self.subTest(host=host):
+                root = ROOT / ("session" if host == "claude" else "plugins/session")
+                contents = (root / "skills/progress-save/SKILL.md").read_text()
+                self.assertIn("core-scrape", contents)
+                self.assertIn("--all", contents)
+
+    def test_the_claude_variants_mirror_the_sidebar(self):
+        for skill in self.SKILLS:
+            with self.subTest(skill=skill):
+                contents = (ROOT / "session/skills" / skill / "SKILL.md").read_text()
+                self.assertIn("sidebar group", contents)
+                self.assertIn("pinned", contents)
 
     def test_the_codex_variants_need_no_desktop_session_tools(self):
         for skill in self.SKILLS:

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **One progress file per main session** (`session` Claude Code 1.3.0, Codex 1.2.0).
+  - `session:progress-save` writes the main session's own `docs/progress/<main-session>.md`. The file name comes from
+    the sidebar title in lower case, with hyphens, so "Core: Scrape" becomes `core-scrape.md`.
+  - It finds an existing file by the session's identifier, so renaming a session doesn't create a second file. It
+    never adopts another main session's file because that file is the only one.
+  - The session registry records each session's exact sidebar title, sidebar group, pin, model, effort, permission
+    mode, working folder, worktree and branch.
+  - `session:progress-resume` recreates the sessions with those exact titles and settings, and puts them back in their
+    groups and pins. On the account that owns them, it restores any title, group or pin that has drifted.
+  - The Codex variants record titles and settings where Codex exposes them, and keep the Claude sidebar details for a
+    return to Claude.
+
+### Added
+
+- **`session:progress-save --all`** saves every main session that has a progress file. In Claude Code, it asks each
+  main session, by its recorded identifier, to save itself, and reports any it couldn't reach. In Codex, it saves its
+  own file and lists the others to save from their own main sessions.
+
 ## [1.14.0] - 2026-10-29
 
 ### Added
