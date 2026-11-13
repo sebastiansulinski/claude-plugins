@@ -80,8 +80,18 @@ class CloneUnsupported(SwitchError):
     exit_code = 6
 
 
+def claude_app_in(process_listing: str) -> bool:
+    """Whether a `ps -axo comm=` listing holds the desktop app's main process.
+
+    Matched by executable path: `pgrep -x Claude` misses it, and Claude Code's own processes run from a
+    lower-case `claude.app` that must not count.
+    """
+    return any(line.strip().endswith("/Claude.app/Contents/MacOS/Claude") for line in process_listing.splitlines())
+
+
 def app_is_running() -> bool:
-    return subprocess.run(["pgrep", "-x", "Claude"], capture_output=True).returncode == 0
+    listing = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True, check=True).stdout
+    return claude_app_in(listing)
 
 
 def clonefile(source: Path, destination: Path) -> None:

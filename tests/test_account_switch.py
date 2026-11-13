@@ -606,6 +606,25 @@ class RestoreTest(SwitchTestCase):
         self.assertEqual(self.apply(), 5)
 
 
+class AppDetectionTest(unittest.TestCase):
+    def test_the_desktop_app_is_recognised_by_its_executable_path(self):
+        module = load_module()
+        listing = (
+            "/Users/seb/Library/Application Support/Claude/claude-code/2.1.317/abc/claude.app/Contents/MacOS/claude\n"
+            "/Applications/Claude.app/Contents/MacOS/Claude\n"
+        )
+        self.assertTrue(module.claude_app_in(listing))
+
+    def test_claude_code_processes_alone_are_not_the_desktop_app(self):
+        module = load_module()
+        listing = (
+            "/Users/seb/Library/Application Support/Claude/claude-code/2.1.317/abc/claude.app/Contents/MacOS/claude\n"
+            "/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper\n"
+            "/bin/zsh\n"
+        )
+        self.assertFalse(module.claude_app_in(listing))
+
+
 class PackageContractTest(unittest.TestCase):
     def test_the_skill_is_claude_only(self):
         self.assertTrue((ROOT / "session/skills/account-switch/SKILL.md").is_file())
