@@ -183,7 +183,7 @@ keeps the bare name, so worktree's init is reachable only by its full name.
 | Plugin | Commands | What it does |
 |--------|----------|--------------|
 | `review` | `/review:scrutinise`, `/review:plan-review`, `/review:plan-verify` | Deep critical review of recent work; multi-agent grounded review of a plan file; and verification that a plan was fully and correctly implemented, plain-language summary first. |
-| `session` | `/session:good-morning`, `/session:call-it-a-day`, `/session:progress-save`, `/session:progress-resume` | Resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume a main session and all its sub-sessions through its own `docs/progress/<main-session>.md` (named from the sidebar title, for example `core-scrape.md`), recreating them with their exact titles, sidebar groups and settings under another account or host, each with its own hand-over note as portable memory; `--all` saves every main session. |
+| `session` | `/session:good-morning`, `/session:call-it-a-day`, `/session:progress-save`, `/session:progress-resume`, `/session:account-switch` | Resume the previous session, capture end-of-session state so the next resumes cleanly, and save or resume a main session and all its sub-sessions through its own `docs/progress/<main-session>.md` (named from the sidebar title, for example `core-scrape.md`), recreating them with their exact titles, sidebar groups and settings under another account or host, each with its own hand-over note as portable memory; `--all` saves every main session. `/session:account-switch <email>` mirrors the whole Claude desktop sidebar onto another account on the same Mac (Claude Code only; see [below](#switching-claude-desktop-accounts-sessionaccount-switch)). |
 | `repo` | `/repo:deprecate` | Fully deprecate and archive a repository. |
 | `release` | `/release:publish` | Run the full changelog → git tag → GitHub release workflow. |
 | `requirements` | `/requirements:interrogate` | Exhaustive requirements interrogation — never writes code. |
@@ -234,6 +234,55 @@ The exception is `gitgraph`, which ships code instead of instructions: a
 Python runtime it shares with the Codex package.
 To add a new plugin, create the directory and register it in
 `.claude-plugin/marketplace.json`.
+
+## Switching Claude desktop accounts (`/session:account-switch`)
+
+The Claude desktop app holds one account at a time, and each account keeps its own sidebar. Conversations, memory
+and `~/.claude/CLAUDE.md` are shared by every account on the Mac; the sidebar isn't. `/session:account-switch`
+makes another account's sidebar an exact copy of this one. That covers every session with its title, sub-session
+nesting, sidebar groups, pins, archived state, model and settings, plus the scheduled tasks. Every session opens
+with its full history.
+
+It's Claude Code only: the Codex package has no equivalent.
+
+### How to switch
+
+1. In any session on the account you're leaving, run `/session:account-switch you@other-account.example`. The
+   email address is mandatory; without it the command doesn't run.
+   - It works out which account is signed in. The app's cached account must agree with the live evidence (this
+     session's own record, written moments ago); if they disagree, you're asked.
+   - The first time an email address is used, you pick its account from a list showing each account's session
+     count, latest activity and recent titles. The answer is remembered.
+   - It shows a preview: what is copied, which of the other account's sessions leave its sidebar, and any problems
+     that already exist. Nothing changes until you say yes. Then it puts one command on the clipboard.
+2. Quit the app (Cmd+Q), paste the command into Terminal and press Return. With the app closed, the command:
+   1. backs up both accounts' sessions, the app's settings, `~/.claude/CLAUDE.md`, the scheduled task instructions
+      and `~/.claude/projects` (cloned copy-on-write, so it's fast and takes almost no space);
+   2. builds the new sidebar on the side and swaps it in;
+   3. writes the sidebar groups;
+   4. checks the result and reopens the app.
+
+   Any failure rolls everything back. If the command is interrupted, running it again finishes or undoes the switch.
+3. Sign out in the app, then sign in to the other account.
+
+Not carried over: Remote Control, per-session connector toggles (the app reconnects the new account's connectors
+when a session starts) and per-account settings. The other account's sessions that weren't on this one are in the
+backup.
+
+### Undo and backups
+
+```bash
+python3 -I "<plugin>/skills/account-switch/scripts/account_switch.py" restore [<backup id>] [--recover-missing-transcripts]
+python3 -I "<plugin>/skills/account-switch/scripts/account_switch.py" status
+```
+
+`restore` runs with the app closed. It puts back only the switched-to account's sessions and sidebar groups, from
+the newest backup by default, through the same recoverable steps. It never overwrites conversations, `CLAUDE.md` or
+scheduled task instructions; it copies back only what's missing.
+
+Backups and operation journals live in `~/claude/account-switch/`, and the newest three complete backups are kept.
+The script relies on the desktop app's private storage layout. It checks that layout on every run and stops if it
+changes. It's covered by `tests/test_account_switch.py`.
 
 ## The `gitgraph` plugin
 

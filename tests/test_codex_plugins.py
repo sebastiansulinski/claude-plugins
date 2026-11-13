@@ -24,6 +24,8 @@ EXPECTED = {
     "explain": {"explain"},
     "gitgraph": {"gitgraph"},
 }
+# Skills that exist only for Claude Code, because they drive the Claude desktop app.
+CLAUDE_ONLY = {"session": {"account-switch"}}
 # Claude Code plugins that ship a function-hooks module instead of skills. Their Codex package is a
 # skill that runs the same runtime (gitgraph/runtime/gitgraph.py).
 CLAUDE_HOOK_PACKAGES = {"gitgraph"}
@@ -53,7 +55,10 @@ class CodexPackagesTest(unittest.TestCase):
                     for path in claude_skills:
                         self.assertEqual(yaml.safe_load(path.read_text().split("---", 2)[1])["name"], path.parent.name)
                     entrypoints = {path.stem for path in (ROOT / plugin / "commands").glob("*.md")}
-                    self.assertEqual(entrypoints | {path.parent.name for path in claude_skills}, expected)
+                    self.assertEqual(
+                        entrypoints | {path.parent.name for path in claude_skills},
+                        expected | CLAUDE_ONLY.get(plugin, set()),
+                    )
                 skills = list((ROOT / "plugins" / plugin / "skills").glob("*/SKILL.md"))
                 self.assertEqual({path.parent.name for path in skills}, expected)
                 for path in skills:
@@ -74,7 +79,7 @@ class CodexPackagesTest(unittest.TestCase):
             with self.subTest(plugin=plugin):
                 self.assertFalse((ROOT / plugin / "commands").exists(), f"{plugin} still has a commands/ directory")
                 skills = {path.parent.name for path in (ROOT / plugin / "skills").glob("*/SKILL.md")}
-                self.assertEqual(skills, expected)
+                self.assertEqual(skills, expected | CLAUDE_ONLY.get(plugin, set()))
 
     def test_manifest_identity_and_resources_are_self_contained(self):
         for plugin in EXPECTED:

@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`session:account-switch <email address>`** (`session` Claude Code 1.5.0; Claude Code only, the Codex package is
+  unchanged). It mirrors the whole Claude desktop sidebar onto another account on the same Mac: every session with
+  its title, sub-session nesting, sidebar groups, pins, archived state and settings, plus the scheduled tasks.
+  Conversations, memory and `CLAUDE.md` are already shared between accounts.
+  - The target account's email address is mandatory. An email address seen for the first time is matched once
+    against the list of unlabelled accounts, then remembered in `~/claude/account-switch/accounts.json`.
+  - The signed-in account is accepted only when the app's cached account agrees with live evidence (this session's
+    own record, freshly written). Otherwise the user confirms it.
+  - In the app it only previews and arms. The switch itself runs from Terminal with the app closed:
+    - it backs up both accounts' sessions, the app's settings, `CLAUDE.md`, the scheduled task instructions and a
+      copy-on-write clone of `~/.claude/projects`;
+    - it builds the new sidebar on the side and swaps it in;
+    - it writes the sidebar groups;
+    - it checks the result and reopens the app.
+
+    A journal makes every step recoverable: any failure rolls back, and an interrupted run is finished or undone on
+    the next one.
+  - Copied sessions drop their Remote Control and connector state; the app rebuilds connectors for the new account
+    when a session starts. Queued input in the target is quarantined in the backup.
+  - `restore` puts back only the switched-to account's sessions and groups, through the same transaction. It never
+    overwrites shared files and copies back only missing ones. The newest three complete backups are kept.
+- `tests/test_account_switch.py` covers discovery, preview, apply, a simulated kill at every step, restore,
+  retention and locking. The package contract test now allows deliberate Claude-only skills.
+
 ## [1.16.0] - 2026-10-29
 
 ### Added
