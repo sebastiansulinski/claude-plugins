@@ -302,6 +302,48 @@ worktree_add() {
     die "git worktree add failed: $GIT_OUT"
 }
 
+# move_shared_worktree_setting — a submodule's checkout keeps its location in
+# core.worktree of the shared git directory's config. Linked worktrees ignore
+# that value only while extensions.worktreeConfig is off. Once another tool
+# switches it on (any `git config --worktree …` does), the shared value applies
+# to every linked worktree: each resolves to the git directory and shows every
+# tracked file as deleted. Git's documented layout then keeps the value in the
+# main checkout's own config.worktree, so move it there before adding a worktree.
+move_shared_worktree_setting() {
+    local common shared own
+    common=$(physical_dir "$(git rev-parse --git-common-dir)") || return 0
+    if [ "$(git config --file "$common/config" --bool --get extensions.worktreeConfig 2>/dev/null)" != true ]; then
+        return 0
+    fi
+    shared=$(git config --file "$common/config" --get core.worktree 2>/dev/null) || return 0
+    own=$(git config --file "$common/config.worktree" --get core.worktree 2>/dev/null || true)
+    if [ -z "$own" ]; then
+        git config --file "$common/config.worktree" core.worktree "$shared" \
+            || die "cannot write core.worktree to '$common/config.worktree'"
+    fi
+    git config --file "$common/config" --unset core.worktree \
+        || die "cannot remove core.worktree from '$common/config'"
+    printf 'worktree.sh: note: moved core.worktree from %s to %s, because extensions.worktreeConfig is on and the shared value would point every linked worktree at the git directory\n' \
+        "$common/config" "$common/config.worktree" >&2
+}
+
+# verify_new_worktree <path> <branch> — git must see the new worktree as its own
+# top level. If it resolves anywhere else (a misplaced core.worktree, for
+# example), every tracked file reads as deleted there, so the worktree and its
+# branch are removed again rather than handed over.
+verify_new_worktree() {
+    local path=$1 branch=$2 toplevel expected resolved
+    expected=$(physical_dir "$path") || expected=$path
+    toplevel=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || true)
+    resolved=$(physical_dir "$toplevel") || resolved=$toplevel
+    if [ -n "$toplevel" ] && [ "$resolved" = "$expected" ]; then
+        return 0
+    fi
+    git worktree remove --force "$path" >/dev/null 2>&1 || true
+    git branch -D "$branch" >/dev/null 2>&1 || true
+    die "the new worktree at '$path' resolves to '${toplevel:-nothing}' instead of itself, so git would read every file there as deleted; the worktree and branch '$branch' were removed again. Check core.worktree in the repository's git config"
+}
+
 # enumerate_worktrees — fills WT_PATHS / WT_BRANCHES (branch empty when
 # detached) and MAIN_WT from NUL-delimited porcelain output, so paths
 # containing spaces cannot break parsing.
@@ -411,7 +453,9 @@ cmd_create() {
         info "note: this repository is a submodule of '$SUPER_ROOT'; its shared git directory lives under the superproject"
     fi
 
+    move_shared_worktree_setting
     worktree_add "$worktree_path" "$branch" "$BASE"
+    verify_new_worktree "$worktree_path" "$branch"
     # Provenance markers: base and start commit for merged-ness, path and
     # session for ownership, creation time for the record. cleanup only ever
     # considers a worktree whose session AND recorded path both match.
@@ -856,13 +900,16 @@ PYEOF
 # ---------------------------------------------------------------------------
 # repo_identity — the main checkout's physical path. Inside a submodule, git
 # worktree list reports the main worktree as the module's git directory
-# (.git/modules/<name>), so the checkout is recovered from core.worktree.
+# (.git/modules/<name>), so the checkout is recovered from core.worktree: the
+# main checkout's own config.worktree first (where move_shared_worktree_setting
+# puts it), then the shared config.
 repo_identity() {
     local common main_phys configured
     common=$(physical_dir "$(git rev-parse --git-common-dir)") || common=""
     main_phys=$(physical_dir "$MAIN_WT") || main_phys=$MAIN_WT
     if [ -n "$common" ] && [ "$main_phys" = "$common" ]; then
-        configured=$(git config --file "$common/config" --get core.worktree 2>/dev/null || true)
+        configured=$(git config --file "$common/config.worktree" --get core.worktree 2>/dev/null \
+            || git config --file "$common/config" --get core.worktree 2>/dev/null || true)
         if [ -n "$configured" ]; then
             case $configured in
                 /*) ;;

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`worktree:create` repairs a submodule whose linked worktrees all point at its git directory** (`worktree`
+  Claude Code 1.2.1, Codex 1.1.1). A submodule's checkout keeps its location in `core.worktree` in the shared git
+  config. Linked worktrees ignore it only while per-worktree config is off. Once any tool switches that on (every
+  `git config --worktree …` does), the shared value applies to every linked worktree, and each one shows every
+  tracked file as deleted. Before adding a worktree, `create` now moves the value into the main checkout's own
+  `config.worktree` and says so, which repairs the existing worktrees too. After adding one, it checks that the new
+  worktree resolves to itself, and removes the worktree and its branch again if it doesn't. `cleanup` reads the moved
+  value as well, so it still names the submodule's checkout.
+
 ## [1.17.1] - 2026-11-13
 
 ### Fixed

@@ -890,6 +890,73 @@ assert_eq "S5 submodule HEAD unchanged" "$(head_of "$SUB")" "$SUB_HEAD_5"
 assert_eq "S5 submodule branch unchanged" "$(branch_of "$SUB")" "$SUB_BRANCH_5"
 assert_eq "S5 superproject status unchanged" "$(snap "$SUPER")" "$SUPER_SNAP_5"
 
+# --- S7: the submodule's shared core.worktree stays put while per-worktree config is off ---------
+toplevel_of() { (cd "$1" && cd "$(git rev-parse --show-toplevel)" && pwd -P); }
+SUB_COMMON=$(cd "$SUB" && cd "$(git rev-parse --git-common-dir)" && pwd -P)
+SUB_SHARED_WORKTREE=$(git config --file "$SUB_COMMON/config" --get core.worktree)
+[ -n "$SUB_SHARED_WORKTREE" ] || fail "S7 precondition: the submodule keeps its checkout in core.worktree" "unset"
+pass "S7 precondition: the submodule keeps its checkout in core.worktree"
+run_in "$SUB" "$SCRIPT" create sk1 --json
+expect_success "S7 create with per-worktree config off"
+SK1_PATH=$(pyget "$OUT" "d['path']")
+assert_eq "S7 shared core.worktree untouched" "$(git config --file "$SUB_COMMON/config" --get core.worktree)" "$SUB_SHARED_WORKTREE"
+assert_not_exists "S7 no config.worktree written" "$SUB_COMMON/config.worktree"
+assert_eq "S7 new worktree resolves to itself" "$(toplevel_of "$SK1_PATH")" "$SK1_PATH"
+
+# --- S8: per-worktree config switched on elsewhere: the shared setting moves before adding --------
+# Another tool ran `git config --worktree …`, which switches extensions.worktreeConfig on. From then
+# the shared core.worktree applies to every linked worktree and points each one at the git directory.
+git -C "$SUB" config extensions.worktreeConfig true
+assert_eq "S8 precondition: the earlier worktree now resolves to the git directory" "$(toplevel_of "$SK1_PATH")" "$SUB_COMMON"
+run_in "$SUB" "$SCRIPT" create sk2 --json
+expect_success "S8 create succeeds"
+SK2_PATH=$(pyget "$OUT" "d['path']")
+assert_contains "S8 the move is reported" "$ERR" "core.worktree"
+run_in "$SUB" git config --file "$SUB_COMMON/config" --get core.worktree
+expect_failure "S8 shared config no longer holds core.worktree"
+assert_eq "S8 the main checkout's own config holds it" "$(git config --file "$SUB_COMMON/config.worktree" --get core.worktree)" "$SUB_SHARED_WORKTREE"
+assert_eq "S8 main checkout still resolves to itself" "$(toplevel_of "$SUB")" "$SUB"
+assert_eq "S8 new worktree resolves to itself" "$(toplevel_of "$SK2_PATH")" "$SK2_PATH"
+assert_eq "S8 the earlier worktree resolves to itself again" "$(toplevel_of "$SK1_PATH")" "$SK1_PATH"
+assert_eq "S8 new worktree clean" "$(snap "$SK2_PATH")" ""
+assert_eq "S8 earlier worktree clean" "$(snap "$SK1_PATH")" ""
+
+# --- S9: once moved, nothing moves again and cleanup still names the checkout ---------------------
+CONFIG_WORKTREE_8=$(cat "$SUB_COMMON/config.worktree")
+run_in "$SUB" "$SCRIPT" create sk3 --json
+expect_success "S9 second create succeeds"
+assert_not_contains "S9 nothing left to move" "$ERR" "core.worktree"
+assert_eq "S9 config.worktree unchanged" "$(cat "$SUB_COMMON/config.worktree")" "$CONFIG_WORKTREE_8"
+run_in "$SUB" env WORKTREE_SESSION=s9 "$SCRIPT" cleanup --json
+LAST_JSON=$OUT
+expect_success "S9 cleanup report after the move"
+assert_eq "S9 cleanup names the submodule checkout, not its git directory" "$(pyget "$OUT" "[r['path'] for r in d['repositories']]")" "['$SUB']"
+
+# --- S10: a new worktree that does not resolve to itself is undone, never handed over -------------
+REAL_GIT=$(command -v git)
+GIT_SHIM_DIR="$WORK/git-shim"
+mkdir -p "$GIT_SHIM_DIR"
+cat > "$GIT_SHIM_DIR/git" <<EOS
+#!/bin/sh
+if [ "\$1" = "-C" ] && [ "\$2" = "\$FAKE_TOPLEVEL_FOR" ] && [ "\$3" = "rev-parse" ] && [ "\$4" = "--show-toplevel" ]; then
+    printf '%s\n' "\$FAKE_TOPLEVEL"
+    exit 0
+fi
+exec "$REAL_GIT" "\$@"
+EOS
+chmod +x "$GIT_SHIM_DIR/git"
+run_in "$SUB" env PATH="$GIT_SHIM_DIR:$PATH" FAKE_TOPLEVEL_FOR="$WORK/sub-worktrees/sk4" FAKE_TOPLEVEL="$SUB_COMMON" \
+    "$SCRIPT" create sk4
+expect_failure "S10 create refuses a worktree that resolves elsewhere"
+assert_contains "S10 message names where it resolved" "$ERR" "$SUB_COMMON"
+assert_not_exists "S10 worktree removed" "$WORK/sub-worktrees/sk4"
+run_in "$SUB" git show-ref --verify --quiet refs/heads/wt/sk4
+expect_failure "S10 branch removed"
+for name in sk1 sk2 sk3; do
+    run_in "$SUB" "$SCRIPT" remove "$name" --delete-branch --json
+    expect_success "S10 tidy $name"
+done
+
 # --- S6: final invariants after cleanup cases ----------------------------------------------------
 assert_eq "S6 submodule status unchanged after all tests" "$(snap "$SUB")" "$SUB_SNAP_0"
 assert_eq "S6 submodule HEAD unchanged after all tests" "$(head_of "$SUB")" "$SUB_HEAD_0"
